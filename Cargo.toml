@@ -1,0 +1,2 @@
+[workspace]
+members = ["boot-lib", "boot-rs", "boot-strap", "initramfs-lib", "initramfs-rs"]

@@ -1,0 +1,15 @@
+[package]
+name = "boot-strap"
+version = "0.1.0"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+boot-lib = { path = "../boot-lib" }
+clap = { version = "4.1.11", features = ["derive"] }
+hex = { version = "0.4.3", default-features = false, features = ["alloc"] }
+initramfs-lib = { path = "../initramfs-lib" }
+ring = "0.16.20"
+rpassword = "7.2.0"
+unix-print = "0.1.0"
