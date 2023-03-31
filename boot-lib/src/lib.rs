@@ -2,7 +2,7 @@
 #![warn(clippy::pedantic)]
 extern crate alloc;
 
-use crate::crypt::DEFAULT_CONFIG;
+use crate::crypt::{DEFAULT_CONFIG, REQUIRED_HASH_LENGTH, REQUIRED_IV_LENGTH};
 use alloc::format;
 use alloc::string::{String, ToString};
 
@@ -12,7 +12,7 @@ pub mod crypt;
 pub struct BootCfg<'a> {
     pub device: &'a str,
     pub encrypted_path_on_device: &'a str,
-    pub aes_initialization_vector: [u8; 16],
+    pub aes_initialization_vector: [u8; REQUIRED_IV_LENGTH],
     pub argon2_salt: [u8; 32],
     pub argon2_mem_cost: u32,
     pub argon2_time_cost: u32,
@@ -26,7 +26,7 @@ impl<'a> BootCfg<'a> {
     pub fn parse_raw(cfg: &'a str) -> Result<Self, String> {
         let mut device: Option<&'a str> = None;
         let mut encrypted_path_on_device: Option<&'a str> = None;
-        let mut aes_initialization_vector: Option<[u8; 16]> = None;
+        let mut aes_initialization_vector: Option<[u8; REQUIRED_IV_LENGTH]> = None;
         let mut argon2_salt: Option<[u8; 32]> = None;
         let mut argon2_mem_cost: Option<u32> = None;
         let mut argon2_time_cost: Option<u32> = None;
@@ -43,15 +43,15 @@ impl<'a> BootCfg<'a> {
                         encrypted_path_on_device = Some(value);
                     }
                     "aes_initialization_vector" => {
-                        let mut buf = [0u8; 16];
+                        let mut buf = [0u8; REQUIRED_IV_LENGTH];
                         hex::decode_to_slice(value.as_bytes(), &mut buf)
-                            .map_err(|e| format!("ERROR: Failed to decode `aes_initialization_vector` as [u8; 16] from hex bytes: {e}"))?;
+                            .map_err(|e| format!("ERROR: Failed to decode `aes_initialization_vector` as [u8; {REQUIRED_IV_LENGTH}] from hex bytes: {e}"))?;
                         aes_initialization_vector = Some(buf);
                     }
                     "argon2_salt" => {
-                        let mut buf = [0u8; 32];
+                        let mut buf = [0u8; REQUIRED_HASH_LENGTH];
                         hex::decode_to_slice(value.as_bytes(), &mut buf)
-                            .map_err(|e| format!("ERROR: Failed to decode `argon2_salt` as [u8; 32] from hex bytes: {e}"))?;
+                            .map_err(|e| format!("ERROR: Failed to decode `argon2_salt` as [u8; {REQUIRED_HASH_LENGTH}] from hex bytes: {e}"))?;
                         argon2_salt = Some(buf);
                     }
                     "argon2_mem_cost" => {
@@ -131,15 +131,13 @@ mod tests {
 
     #[test]
     fn can_parse_example_cfg() {
-        let bytes = include_str!("../../boot.cfg");
+        let bytes = include_str!("../../boot.cfg.tst");
         let res = BootCfg::parse_raw(bytes).unwrap();
         let ex_salt = [
-            107u8, 105, 119, 105, 107, 105, 119, 105, 107, 105, 119, 105, 107, 105, 119, 105, 107,
-            105, 119, 105, 107, 105, 119, 105, 107, 105, 119, 105, 107, 105, 119, 105,
+            94, 189, 125, 173, 98, 245, 202, 217, 215, 209, 209, 42, 237, 43, 164, 222, 17, 109,
+            77, 136, 43, 72, 90, 188, 243, 25, 54, 222, 103, 253, 30, 2,
         ];
-        let ex_iv = [
-            107u8, 105, 119, 105, 107, 105, 119, 105, 107, 105, 119, 105, 107, 105, 119, 105,
-        ];
+        let ex_iv = [140, 146, 78, 3, 116, 64, 112, 79, 95, 245, 77, 249];
         assert_eq!(ex_salt, res.argon2_salt);
         assert_eq!(ex_iv, res.aes_initialization_vector);
         assert_eq!(DEFAULT_CONFIG.lanes, res.argon2_lanes);

@@ -5,7 +5,8 @@ mod initramfs;
 
 use crate::initramfs::{gen_key_file, generate_initramfs, regen_key_file};
 use boot_lib::crypt::{
-    derive_with_salt, encrypt_boot_image, hash_and_decrypt, Argon2Config, BootDecryptError,
+    derive_with_salt, encrypt, hash_and_decrypt, Argon2Config, BootDecryptError,
+    REQUIRED_HASH_LENGTH, REQUIRED_IV_LENGTH,
 };
 use boot_lib::BootCfg;
 use clap::{Parser, Subcommand};
@@ -235,9 +236,10 @@ fn generate(opts: &GenBootOpts) -> Result<(), String> {
     let key = key.map_err(|e| format!("Failed to derive a key from the password: {e}"))?;
     println!("[boot-rs]: Derived encryption key in {derive_key_time} seconds.");
     println!("[boot-rs]: Encrypting kernel image.");
-    let (encrypted, encrypt_time) = timed(|| encrypt_boot_image(&kernel_data, &key.key, iv))?;
+    let (encrypted, encrypt_time) = timed(|| encrypt(&kernel_data, &key.key, iv))?;
     println!("[boot-rs]: Encrypted kernel image in {encrypt_time} seconds.");
     // Insanity check.
+    let encrypted = encrypted?;
     if encrypted == kernel_data {
         return Err(
             "Encryption failed, output data same as input data (Sanity check triggered)."
@@ -251,7 +253,7 @@ fn generate(opts: &GenBootOpts) -> Result<(), String> {
             Ok(dec) => Ok(dec),
             Err(e) => {
                 match e {
-                    BootDecryptError::BadMagic => {
+                    BootDecryptError::InvalidContent => {
                         Err("Failed to decrypt encrypted boot image (better here than at boot time), failed to find magic in decrypted bytes".to_string())
                     }
                     BootDecryptError::Other(o) => {
@@ -301,12 +303,13 @@ fn generate(opts: &GenBootOpts) -> Result<(), String> {
 }
 
 #[inline]
-fn generate_crypt_randoms() -> Result<([u8; 16], [u8; 32]), String> {
-    let mut iv: [u8; 16] = [0u8; 16];
+fn generate_crypt_randoms() -> Result<([u8; REQUIRED_IV_LENGTH], [u8; REQUIRED_HASH_LENGTH]), String>
+{
+    let mut iv: [u8; REQUIRED_IV_LENGTH] = [0u8; REQUIRED_IV_LENGTH];
     let rand = ring::rand::SystemRandom::new();
     rand.fill(iv.as_mut_slice())
         .map_err(|e| format!("Failed to generate a random initialization vector: {e}"))?;
-    let mut salt: [u8; 32] = [0u8; 32];
+    let mut salt: [u8; REQUIRED_HASH_LENGTH] = [0u8; REQUIRED_HASH_LENGTH];
     rand.fill(salt.as_mut_slice())
         .map_err(|e| format!("Failed to generate a random salt: {e}"))?;
     Ok((iv, salt))

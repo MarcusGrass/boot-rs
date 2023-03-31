@@ -1,0 +1,7 @@
+device=HD(1,GPT,bxy3cxx1-aa1f-6245-a8d5-854a096b17cx,0x800,0x100000)
+encrypted_path_on_device=\EFI\gentoo\gentoo-6.1.19.enc
+aes_initialization_vector=8c924e037440704f5ff54df9
+argon2_salt=5ebd7dad62f5cad9d7d1d12aed2ba4de116d4d882b485abcf31936de67fd1e02
+argon2_mem_cost=65536
+argon2_time_cost=10
+argon2_lanes=4

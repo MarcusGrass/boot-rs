@@ -119,7 +119,7 @@ pub(crate) fn generate_initramfs(
     let cfg_path_os = cfg_path.as_os_str();
     let cfg_path_utf8 = cfg_path_os
         .to_str()
-        .ok_or_else(|| "Failed to convert cfg path {cfg_path:?} to utf8")?;
+        .ok_or("Failed to convert cfg path {cfg_path:?} to utf8")?;
     write_cfg(&cfg, cfg_path_utf8).map_err(|e| format!("Failed to write initramfs.cfg to {e}"))?;
     Ok(())
 }

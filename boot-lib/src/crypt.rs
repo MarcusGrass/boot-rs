@@ -1,16 +1,15 @@
 use crate::BootCfg;
-use aes::cipher::typenum::U32;
-use aes::cipher::KeyIvInit;
-use aes::cipher::{generic_array::GenericArray, AsyncStreamCipher};
+use aes_gcm::aead::consts::U32;
+use aes_gcm::aead::generic_array::GenericArray;
+use aes_gcm::aead::{Aead, KeyInit, Payload};
+use aes_gcm::{AeadInPlace, Aes256Gcm, Nonce};
 use alloc::format;
 use alloc::string::String;
 use alloc::vec::Vec;
 use argon2::{Algorithm, Params, Version};
 
-type Aes256Cfb8Enc = cfb8::Encryptor<aes::Aes256>;
-type Aes256Cfb8Dec = cfb8::Decryptor<aes::Aes256>;
-
 pub const REQUIRED_HASH_LENGTH: usize = 32;
+pub const REQUIRED_IV_LENGTH: usize = 12;
 pub const MAGIC: [u8; 16] = *b"DECRYPTED_KERNEL";
 
 pub struct Argon2Cfg {
@@ -65,7 +64,7 @@ pub struct DerivedKey {
 /// Hashing failure.
 pub fn derive_with_salt(
     pass: &[u8],
-    salt: [u8; 32],
+    salt: [u8; REQUIRED_HASH_LENGTH],
     config: &Argon2Config,
 ) -> Result<DerivedKey, String> {
     let mut key = [0u8; 32];
@@ -85,33 +84,32 @@ pub fn derive_with_salt(
     Ok(DerivedKey { key, salt })
 }
 
-/// Encrypts the boot image adding the 16 byte magic header.
-/// This header add is wildly inefficient since we need to duplicate the entire vector.
-/// We could realloc and push to front but that is also problematic, this shouldn't
-/// be run in the bootloader anyway but I'm sorry about the RAM.
-#[must_use]
-pub fn encrypt_boot_image(src: &[u8], key: &[u8], iv: [u8; 16]) -> Vec<u8> {
-    let mut new = Vec::with_capacity(src.len() + MAGIC.len());
-    new.extend_from_slice(&MAGIC);
-    new.extend_from_slice(src);
-    encrypt(new, key, iv)
-}
-
-fn encrypt(mut src: Vec<u8>, key: &[u8], iv: [u8; 16]) -> Vec<u8> {
+/// Encrypts some input with AES-GCM.
+/// # Errors
+/// Invalid key or invalid cipher.
+pub fn encrypt(
+    src: &[u8],
+    key: &[u8; REQUIRED_HASH_LENGTH],
+    iv: [u8; REQUIRED_IV_LENGTH],
+) -> Result<Vec<u8>, String> {
     let key: &GenericArray<u8, U32> = GenericArray::from_slice(key);
-    //let cipher = aes::Aes128::new(key);
-    Aes256Cfb8Enc::new(key, &iv.into()).encrypt(&mut src);
-    src
+    let nonce = Nonce::from_slice(&iv);
+
+    let payload = Payload::from(src);
+    let encrypted = Aes256Gcm::new(key)
+        .encrypt(nonce, payload)
+        .map_err(|e| format!("Encryption failed: {e}"))?;
+    Ok(encrypted)
 }
 
 /// Same as `hash_and_decrypt_boot` arguments supplied differently.
 /// # Errors
 /// See `hash_and_decrypt_boot`
 pub fn hash_and_decrypt<'a>(
-    src: &'a mut [u8],
+    src: &'a mut Vec<u8>,
     pass: &[u8],
-    salt: [u8; 32],
-    iv: [u8; 16],
+    salt: [u8; REQUIRED_HASH_LENGTH],
+    iv: [u8; REQUIRED_IV_LENGTH],
     cfg: &Argon2Config,
 ) -> Result<&'a [u8], BootDecryptError> {
     let key = derive_with_salt(pass, salt, cfg).map_err(|e| {
@@ -119,14 +117,14 @@ pub fn hash_and_decrypt<'a>(
             "ERROR: Failed to hash password with provided salt: {e}"
         ))
     })?;
-    decrypt_boot_image(src, &key.key, iv)
+    decrypt(src, &key.key, iv)
 }
 
 #[derive(Debug, Eq, PartialEq)]
 pub enum BootDecryptError {
-    /// Failed to find the expected magic, which is likely because we tried to decrypt
-    /// with the wrong key.
-    BadMagic,
+    /// Failed to decrypt into expected content.
+    /// It could also be because of tampering or corruption.
+    InvalidContent,
     /// Some error during the process of data conversion, would likely not be caused by the wrong
     /// key.
     Other(String),
@@ -138,7 +136,7 @@ pub enum BootDecryptError {
 /// Key derivation failure.
 /// Bad magic at the beginning of the decrypted content, likely caused by entering the wrong `pass`.
 pub fn hash_and_decrypt_boot_cfg<'a>(
-    src: &'a mut [u8],
+    src: &'a mut Vec<u8>,
     pass: &[u8],
     cfg: &BootCfg,
 ) -> Result<&'a [u8], BootDecryptError> {
@@ -152,89 +150,54 @@ pub fn hash_and_decrypt_boot_cfg<'a>(
             "ERROR: Failed to hash password with provided salt: {e}"
         ))
     })?;
-    decrypt_boot_image(src, &key.key, cfg.aes_initialization_vector)
+    decrypt(src, &key.key, cfg.aes_initialization_vector)
 }
 
-fn decrypt_boot_image<'a>(
-    src: &'a mut [u8],
-    key: &[u8],
-    iv: [u8; 16],
+fn decrypt<'a>(
+    src: &'a mut Vec<u8>,
+    key: &[u8; REQUIRED_HASH_LENGTH],
+    iv: [u8; REQUIRED_IV_LENGTH],
 ) -> Result<&'a [u8], BootDecryptError> {
-    let decrypted = decrypt(src, key, iv);
-    if decrypted[..MAGIC.len()] != MAGIC {
-        return Err(BootDecryptError::BadMagic);
-    }
-    Ok(&decrypted[MAGIC.len()..])
-}
-
-fn decrypt<'a>(src: &'a mut [u8], key: &[u8], iv: [u8; 16]) -> &'a [u8] {
     let key: &GenericArray<u8, U32> = GenericArray::from_slice(key);
-    Aes256Cfb8Dec::new(key, &iv.into()).decrypt(src);
-    src
+    let nonce = Nonce::from_slice(&iv);
+    Aes256Gcm::new(key)
+        .decrypt_in_place(nonce, &[], src)
+        .map_err(|_e| BootDecryptError::InvalidContent)?;
+    Ok(src)
 }
 
 #[cfg(test)]
 mod tests {
     use crate::crypt::{
-        decrypt, decrypt_boot_image, encrypt, encrypt_boot_image, BootDecryptError,
+        decrypt, encrypt, REQUIRED_HASH_LENGTH, REQUIRED_IV_LENGTH,
     };
 
     #[test]
     fn encrypt_decrypt() {
-        let key = [0u8; 32];
-        let iv = [0u8; 16];
+        let key = [0u8; REQUIRED_HASH_LENGTH];
+        let iv = [0u8; REQUIRED_IV_LENGTH];
         let data = b"My spooky data";
-        let mut encrypted = encrypt(data.to_vec(), &key, iv);
+        let mut encrypted = encrypt(data, &key, iv).unwrap();
         assert_ne!(data.as_slice(), &encrypted);
-        let decrypted = decrypt(&mut encrypted, &key, iv);
+        let decrypted = decrypt(&mut encrypted, &key, iv).unwrap();
         assert_eq!(data.as_slice(), decrypted);
     }
 
     #[test]
     fn encrypt_decrypt_bad_key() {
-        let key = [0u8; 32];
-        let iv = [0u8; 16];
+        let key = [0u8; REQUIRED_HASH_LENGTH];
+        let iv = [0u8; REQUIRED_IV_LENGTH];
         let data = b"My spooky data";
-        let mut encrypted = encrypt(data.to_vec(), &key, iv);
+        let mut encrypted = encrypt(data, &key, iv).unwrap();
         assert_ne!(data.as_slice(), &encrypted);
-        let decrypted = decrypt(&mut encrypted, &key, iv);
+        let decrypted = decrypt(&mut encrypted, &key, iv).unwrap();
         assert_eq!(data.as_slice(), decrypted);
-        let bad_key = [1u8; 32];
-        let iv = [0u8; 16];
-        let mut encrypted = encrypt(data.to_vec(), &key, iv);
+        let bad_key = [1u8; REQUIRED_HASH_LENGTH];
+        let iv = [0u8; REQUIRED_IV_LENGTH];
+        let mut encrypted = encrypt(data, &key, iv).unwrap();
         assert_ne!(data.as_slice(), &encrypted);
+
         let decrypted = decrypt(&mut encrypted, &bad_key, iv);
-        assert_ne!(data.as_slice(), decrypted);
-    }
-
-    #[test]
-    fn encrypt_decrypt_boot() {
-        let key = [0u8; 32];
-        let iv = [0u8; 16];
-        let data = b"My spooky boot data";
-        let mut encrypted = encrypt_boot_image(data.as_slice(), &key, iv);
-        assert_ne!(data.as_slice(), &encrypted);
-        let decrypted = decrypt_boot_image(&mut encrypted, &key, iv).unwrap();
-        assert_eq!(data.as_slice(), decrypted);
-    }
-
-    #[test]
-    fn encrypt_decrypt_boot_fail_bad_key() {
-        let key = [0u8; 32];
-        let iv = [0u8; 16];
-        let data = b"My spooky boot data";
-        let mut encrypted = encrypt_boot_image(data.as_slice(), &key, iv);
-        assert_ne!(data.as_slice(), &encrypted);
-        let decrypted = decrypt_boot_image(&mut encrypted, &key, iv).unwrap();
-        assert_eq!(data.as_slice(), decrypted);
-        let bad_key = [1u8; 32];
-        let iv = [0u8; 16];
-        let mut encrypted = encrypt_boot_image(data.as_slice(), &key, iv);
-        assert_ne!(data.as_slice(), &encrypted);
-        if let Err(e) = decrypt_boot_image(&mut encrypted, &bad_key, iv) {
-            assert_eq!(BootDecryptError::BadMagic, e);
-        } else {
-            panic!("Successfully decrypted image with a bad key!");
-        }
+        assert!(decrypted.is_err());
     }
 }
