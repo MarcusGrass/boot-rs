@@ -53,7 +53,7 @@ fn boot(system: &mut SystemTable<Boot>) -> Result<(), String> {
     // into a function. Gets around vtable shennanigans as well.
     let encrypted_kernel = read_kernel_data::<SimpleFileSystem>(system, &boot_cfg)?;
     let _ = system.stdout().write_str("[boot-rs]: Read kernel file.\n");
-    let decrypted_kernel = decrypt_kernel(system, &encrypted_kernel, &boot_cfg)?;
+    let decrypted_kernel = decrypt_kernel(system, &encrypted_kernel)?;
     let _ = system
         .stdout()
         .write_str("[boot-rs]: Decrypted kernel file, loading kernel image.\n");
@@ -78,7 +78,7 @@ fn read_kernel_data<P: ProtocolPointer + ?Sized>(
         .boot_services()
         .open_protocol_exclusive::<DevicePathToText>(to_text_handle)
         .unwrap();
-    for handle in hb.handles().iter() {
+    for handle in hb.iter() {
         if let Ok(dev_protoc) = system
             .boot_services()
             .open_protocol_exclusive::<DevicePath>(*handle)
@@ -139,25 +139,14 @@ fn read_kernel_data<P: ProtocolPointer + ?Sized>(
     Err("ERROR: Failed to find kernel image an any device".to_string())
 }
 
-fn decrypt_kernel(
-    system: &mut SystemTable<Boot>,
-    buf: &[u8],
-    cfg: &BootCfg,
-) -> Result<Vec<u8>, String> {
+fn decrypt_kernel(system: &mut SystemTable<Boot>, buf: &[u8]) -> Result<Vec<u8>, String> {
     for i in 1..4 {
         let key = get_pass(system)?;
-        let mut buf_c = buf.to_vec();
         let _ = system
             .stdout()
             .write_str("[boot-rs]: Got password, deriving key and attempting decrypt.\n");
         let t0 = system.runtime_services().get_time();
-        match boot_lib::crypt::hash_and_decrypt(
-            &mut buf_c,
-            key.as_bytes(),
-            cfg.argon2_salt,
-            cfg.aes_initialization_vector,
-            &cfg.into(),
-        ) {
+        match boot_lib::crypt::hash_and_decrypt(buf, key.as_bytes()) {
             Ok(tgt) => {
                 let t1 = system.runtime_services().get_time();
                 let failed_time = if let (Ok(t0), Ok(t1)) = (t0, t1) {
@@ -179,7 +168,7 @@ fn decrypt_kernel(
                         "[boot-rs]: Derived key and decrypted kernel.\n"
                     ));
                 }
-                return Ok(tgt.to_vec());
+                return Ok(tgt);
             }
             Err(e) => match e {
                 BootDecryptError::InvalidContent => {

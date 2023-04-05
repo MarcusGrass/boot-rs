@@ -7,5 +7,5 @@ edition = "2021"
 
 [dependencies]
 boot-lib = { path = "../boot-lib" }
-uefi = { version = "0.19.0", features = ["alloc"] }
-uefi-services = "0.16.0"
+uefi = { version = "0.20.0", features = ["alloc"] }
+uefi-services = "0.17.0"

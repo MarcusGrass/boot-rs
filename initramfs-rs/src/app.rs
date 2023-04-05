@@ -4,6 +4,7 @@ use initramfs_lib::{bail_to_shell, print_error, print_ok, read_cfg, Cfg};
 /// [Boot kernel without bootloader](https://tecporto.pt/wiki/index.php/Booting_the_Linux_Kernel_without_a_bootloader)
 pub(crate) fn main_loop() -> Result<(), i32> {
     let mut args = tiny_std::env::args();
+    // First arg is the path to this binary, by convention at least, might be POSIX.
     let _self = args.next();
     let cfg_path = args.next();
     if cfg_path.is_none() {

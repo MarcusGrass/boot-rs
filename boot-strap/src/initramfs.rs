@@ -1,10 +1,65 @@
 use crate::Argon2Opts;
-use initramfs_lib::{read_cfg, write_cfg, Cfg};
+use boot_lib::crypt::{Argon2Salt, REQUIRED_HASH_LENGTH};
+use initramfs_lib::{print_ok, read_cfg, write_cfg, Cfg};
 use ring::rand::SecureRandom;
 use std::fs::{DirBuilder, OpenOptions};
 use std::io::{ErrorKind, Write};
 use std::os::unix::fs::{DirBuilderExt, OpenOptionsExt};
-use std::path::Path;
+use std::path::{Path, PathBuf};
+
+pub(crate) fn gen_cfg(
+    home_uuid: String,
+    root_uuid: String,
+    swap_uuid: String,
+    dest: Option<PathBuf>,
+    overwrite: bool,
+) -> Result<(), String> {
+    for disk_uuid in [&home_uuid, &root_uuid, &swap_uuid] {
+        if let Err(e) = std::fs::metadata(format!("/dev/disk/by-uuid/{disk_uuid}")) {
+            return Err(format!("Failed to read metadata for disk specified by uuid {disk_uuid}, double check that the disk is correct: {e}"));
+        }
+    }
+    let mut salt = [0u8; REQUIRED_HASH_LENGTH];
+    ring::rand::SystemRandom::new()
+        .fill(&mut salt)
+        .map_err(|e| format!("Failed to generate random salt {e}"))?;
+    let cfg = Cfg {
+        root_uuid,
+        swap_uuid,
+        home_uuid,
+        pass_salt: Some(hex::encode(salt)),
+        crypt_file: None,
+    };
+    let dest = if let Some(dest) = dest {
+        print_ok!("Using supplied location as destination {dest:?}");
+        dest
+    } else {
+        print_ok!("No cfg output destination supplied");
+        let config_dir = std::env::var("XDG_CONFIG_HOME").map_err(|_e| {
+            "No cfg output destination supplied, couldn't find `XDG_CONFIG_HOME`".to_string()
+        })?;
+        let dest_dir = PathBuf::from(config_dir).join("boot-rs");
+        if dest_dir.exists() {
+            let dest = dest_dir.join("initramfs.cfg");
+            if dest.exists() && !overwrite {
+                return Err(format!(
+                    "Destination {dest:?} already exists and `overwrite` was not specified"
+                ));
+            }
+            dest
+        } else {
+            std::fs::create_dir_all(&dest_dir)
+                .map_err(|e| format!("Failed to create destination directory {dest_dir:?}: {e}"))?;
+            dest_dir.join("initramfs.cfg")
+        }
+    };
+    print_ok!("Writing new CFG to {dest:?}");
+    write_cfg(
+        &cfg,
+        dest.to_str()
+            .ok_or_else(|| format!("Failed to convert output destination to a utf8 string"))?,
+    )
+}
 
 pub(crate) fn gen_key_file(
     cfg_file: &Path,
@@ -16,16 +71,16 @@ pub(crate) fn gen_key_file(
         return Err("The provided cfg already has a provided salt, implying that a key has already been generated.\n\
         If you want to generate a key for the same salt, use `regenerate-key`".to_string());
     }
-    let mut salt = [0u8; 32];
+    let mut salt = [0u8; REQUIRED_HASH_LENGTH];
     ring::rand::SystemRandom::new()
         .fill(&mut salt)
         .map_err(|e| format!("Failed to generate random salt {e}"))?;
     let argon2_cfg = argon2opts.clone().into();
     let pwd = rpassword::prompt_password("Enter password for transient crypt-file: ")
         .map_err(|e| format!("Failed to get password to test disk decryption {e}"))?;
-    let key = boot_lib::crypt::derive_with_salt(pwd.as_bytes(), salt, &argon2_cfg)
+    let key = boot_lib::crypt::derive_key(pwd.as_bytes(), &Argon2Salt(salt), &argon2_cfg)
         .map_err(|e| format!("Failed to derive a key with salt {e}"))?;
-    initramfs_cfg.pass_salt = Some(hex::encode(key.salt));
+    initramfs_cfg.pass_salt = Some(hex::encode(salt));
     let cfg_os = cfg_file.as_os_str();
     let cfg = cfg_os.to_str().ok_or_else(|| {
         "Failed to convert initramfs cfg path to utf8, only utf8 paths allowed".to_string()
@@ -37,7 +92,7 @@ pub(crate) fn gen_key_file(
         .mode(0o400)
         .open(dest)
         .map_err(|e| format!("Failed to create new file at {dest:?}: {e}"))?
-        .write_all(&key.key)
+        .write_all(&key.0)
         .map_err(|e| format!("Failed to write regenerated key to destination {dest:?}: {e}"))
 }
 
@@ -51,14 +106,14 @@ pub(crate) fn regen_key_file(
         return Err("The provided cfg already no provided salt, implying that no key has been generated.\n\
         If you want to generate a new key, use `generate-key`".to_string())
     };
-    let salt_bytes: [u8; 32] = hex::decode(salt)
+    let salt_bytes: [u8; REQUIRED_HASH_LENGTH] = hex::decode(salt)
         .map_err(|e| format!("Failed to decode salt hex {e}"))?
         .try_into()
         .map_err(|e| format!("The provided salt is not 32 bytes {e:?}"))?;
     let pwd = rpassword::prompt_password("Enter password for transient crypt-file: ")
         .map_err(|e| format!("Failed to get password to test disk decryption {e}"))?;
     let argon2_cfg = argon2opts.clone().into();
-    let key = boot_lib::crypt::derive_with_salt(pwd.as_bytes(), salt_bytes, &argon2_cfg)
+    let key = boot_lib::crypt::derive_key(pwd.as_bytes(), &Argon2Salt(salt_bytes), &argon2_cfg)
         .map_err(|e| format!("Failed to derive a key with salt {e}"))?;
     OpenOptions::new()
         .create_new(true)
@@ -66,7 +121,7 @@ pub(crate) fn regen_key_file(
         .mode(0o400)
         .open(dest)
         .map_err(|e| format!("Failed to create new file at {dest:?}: {e}"))?
-        .write_all(&key.key)
+        .write_all(&key.0)
         .map_err(|e| format!("Failed to write regenerated key to destination {dest:?}: {e}"))
 }
 

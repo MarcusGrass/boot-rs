@@ -8,4 +8,3 @@ edition = "2021"
 [dependencies]
 aes-gcm = { version = "0.10.1", default-features = false, features = ["alloc", "aes"] }
 argon2 = { version = "0.5.0", default-features = false, features = ["alloc"] }
-hex = { version = "0.4.3", default-features = false, features = ["alloc"] }
