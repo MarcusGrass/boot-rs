@@ -19,8 +19,8 @@ use uefi::proto::media::file::{File, FileAttribute, FileInfo, FileMode};
 use uefi::proto::media::fs::SimpleFileSystem;
 use uefi::proto::ProtocolPointer;
 use uefi::table::boot::{LoadImageSource, SearchType};
-use uefi::CStr16;
 use uefi::table::runtime::Time;
+use uefi::CStr16;
 
 const CFG_RAW: &str = include_str!("../../boot.cfg");
 
@@ -53,7 +53,7 @@ fn boot(system: &mut SystemTable<Boot>) -> Result<(), String> {
     // into a function. Gets around vtable shennanigans as well.
     let encrypted_kernel = read_kernel_data::<SimpleFileSystem>(system, &boot_cfg)?;
     let _ = system.stdout().write_str("[boot-rs]: Read kernel file.\n");
-    let decrypted_kernel = decrypt_kernel(system, &encrypted_kernel, &boot_cfg)?;
+    let decrypted_kernel = decrypt_kernel(system, &encrypted_kernel)?;
     let _ = system
         .stdout()
         .write_str("[boot-rs]: Decrypted kernel file, loading kernel image.\n");
@@ -78,7 +78,7 @@ fn read_kernel_data<P: ProtocolPointer + ?Sized>(
         .boot_services()
         .open_protocol_exclusive::<DevicePathToText>(to_text_handle)
         .unwrap();
-    for handle in hb.handles().iter() {
+    for handle in hb.iter() {
         if let Ok(dev_protoc) = system
             .boot_services()
             .open_protocol_exclusive::<DevicePath>(*handle)
@@ -139,31 +139,23 @@ fn read_kernel_data<P: ProtocolPointer + ?Sized>(
     Err("ERROR: Failed to find kernel image an any device".to_string())
 }
 
-fn decrypt_kernel(
-    system: &mut SystemTable<Boot>,
-    buf: &[u8],
-    cfg: &BootCfg,
-) -> Result<Vec<u8>, String> {
+fn decrypt_kernel(system: &mut SystemTable<Boot>, buf: &[u8]) -> Result<Vec<u8>, String> {
     for i in 1..4 {
         let key = get_pass(system)?;
-        let mut buf_c = buf.to_vec();
-        let _ = system.stdout()
+        let _ = system
+            .stdout()
             .write_str("[boot-rs]: Got password, deriving key and attempting decrypt.\n");
         let t0 = system.runtime_services().get_time();
-        match boot_lib::crypt::hash_and_decrypt(
-            &mut buf_c,
-            key.as_bytes(),
-            cfg.argon2_salt,
-            cfg.aes_initialization_vector,
-            &cfg.into(),
-        ) {
+        match boot_lib::crypt::hash_and_decrypt(buf, key.as_bytes()) {
             Ok(tgt) => {
                 let t1 = system.runtime_services().get_time();
                 let failed_time = if let (Ok(t0), Ok(t1)) = (t0, t1) {
+                    #[allow(clippy::cast_precision_loss)]
                     if let Some(delta) = get_time_delta_millis(t0, t1) {
                         let seconds = delta as f32 / 1000f32;
-                        let _ = system.stdout()
-                            .write_fmt(format_args!("[boot-rs]: Derived key and decrypted kernel in {seconds} seconds.\n"));
+                        let _ = system.stdout().write_fmt(format_args!(
+                            "[boot-rs]: Derived key and decrypted kernel in {seconds} seconds.\n"
+                        ));
                         false
                     } else {
                         true
@@ -172,13 +164,14 @@ fn decrypt_kernel(
                     true
                 };
                 if failed_time {
-                    let _ = system.stdout()
-                        .write_fmt(format_args!("[boot-rs]: Derived key and decrypted kernel.\n"));
+                    let _ = system.stdout().write_fmt(format_args!(
+                        "[boot-rs]: Derived key and decrypted kernel.\n"
+                    ));
                 }
-                return Ok(tgt.to_vec());
-            },
+                return Ok(tgt);
+            }
             Err(e) => match e {
-                BootDecryptError::BadMagic => {
+                BootDecryptError::InvalidContent => {
                     let _ = system.stdout().write_fmt(format_args!(
                         "[boot-rs]: Failed to decrypt kernel, bad pass, attempt [{i}/3].\n"
                     ));
@@ -270,10 +263,7 @@ fn await_enter(system_table: &mut SystemTable<Boot>) {
 }
 
 fn get_time_delta_millis(t0: Time, t1: Time) -> Option<u64> {
-    if t0.day() != t1.day() {
-        // Don't really want to take in to account different days, let's keep it simple
-        None
-    } else {
+    if t0.day() == t1.day() {
         let t1_millis = get_millis_of_day(t1);
         let t0_millis = get_millis_of_day(t0);
         if t0_millis > t1_millis {
@@ -281,9 +271,13 @@ fn get_time_delta_millis(t0: Time, t1: Time) -> Option<u64> {
         } else {
             Some(t1_millis - t0_millis)
         }
+    } else {
+        // Don't really want to take in to account different days, let's keep it simple
+        None
     }
 }
 
 fn get_millis_of_day(t: Time) -> u64 {
-    (t.second() as u64 + t.minute() as u64 * 60 + t.hour() as u64 * 3600) * 1000 + t.nanosecond() as u64 / 1_000_000
+    (u64::from(t.second()) + u64::from(t.minute()) * 60 + u64::from(t.hour()) * 3600) * 1000
+        + u64::from(t.nanosecond()) / 1_000_000
 }

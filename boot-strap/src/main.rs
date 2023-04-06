@@ -3,9 +3,10 @@
 
 mod initramfs;
 
-use crate::initramfs::{gen_key_file, generate_initramfs, regen_key_file};
+use crate::initramfs::{gen_cfg, generate_initramfs};
 use boot_lib::crypt::{
-    derive_with_salt, encrypt_boot_image, hash_and_decrypt, Argon2Config, BootDecryptError,
+    derive_key, encrypt, hash_and_decrypt, Argon2Cfg, BootDecryptError, EncryptionMetadata,
+    DEFAULT_CONFIG, REQUIRED_HASH_LENGTH, REQUIRED_NONCE_LENGTH,
 };
 use boot_lib::BootCfg;
 use clap::{Parser, Subcommand};
@@ -34,39 +35,23 @@ enum Actions {
 /// Initramfs generation
 #[derive(clap::Subcommand, Debug)]
 enum InitramfsAction {
-    /// Generate a keyfile to be embedded in the initramfs and then used with cryptsetup.
-    GenerateKey {
-        /// Configuration file where salt will be written into, needs to be a properly formatted
-        /// `initramfs.cfg`.
-        #[clap(short, long)]
-        initramfs_cfg: PathBuf,
-
-        #[clap(flatten)]
-        argon2_opts: Argon2Opts,
-        /// Destination for the keyfile, ideally this should have as low permissions as possible
-        /// ex: 400
-        #[clap(short, long)]
-        destination_file: PathBuf,
+    /// Generate a base configuration with a stable salt
+    GenCfg {
+        /// UUID for the home partition
+        home_uuid: String,
+        /// UUID for the root partition
+        root_uuid: String,
+        /// UUID for the swap partition
+        swap_uuid: String,
+        /// Output file destination, will default to `XDG_CONFIG_HOME` or fail, if not specified.
+        destination_file: Option<PathBuf>,
+        /// Overwrite the current file if present. Probably not good, since we generate a
+        /// cryptsetup key from the generated salt, if key that has already been registered, this
+        /// salt shouldn't change.
+        overwrite: bool,
     },
-
-    /// Regenerate a keyfile to be embedded in the initramfs and then used with cryptsetup.
-    RegenerateKey {
-        /// Configuration file where salt will be written into, needs to be a properly formatted
-        /// `initramfs.cfg` with a provided `password_salt`.
-        #[clap(short, long)]
-        initramfs_cfg: PathBuf,
-
-        #[clap(flatten)]
-        argon2_opts: Argon2Opts,
-
-        /// Destination for the keyfile, ideally this should have as low permissions as possible
-        /// ex: 400
-        #[clap(short, long)]
-        destination_file: PathBuf,
-    },
-
     /// Generate a clean initramfs directory
-    GenerateInitramfs {
+    GenInit {
         /// Configuration file containing uuids of cryptdevices
         #[clap(short, long)]
         initramfs_cfg: PathBuf,
@@ -164,17 +149,17 @@ struct Argon2Opts {
     argon2_lanes: Option<u32>,
 }
 
-impl From<Argon2Opts> for Argon2Config {
+impl From<Argon2Opts> for Argon2Cfg {
     fn from(value: Argon2Opts) -> Self {
-        let mut cfg = Argon2Config::default();
+        let mut cfg = DEFAULT_CONFIG;
         if let Some(lanes) = value.argon2_lanes {
-            cfg.0.lanes = lanes;
+            cfg.lanes = lanes;
         }
         if let Some(mem) = value.argon2_mem {
-            cfg.0.mem_cost = mem;
+            cfg.mem_cost = mem;
         }
         if let Some(time) = value.argon2_time {
-            cfg.0.time_cost = time;
+            cfg.time_cost = time;
         }
         cfg
     }
@@ -190,21 +175,16 @@ fn main() {
             }
         },
         Actions::Initramfs(action) => match action {
-            InitramfsAction::GenerateKey {
-                initramfs_cfg,
-                argon2_opts,
+            InitramfsAction::GenCfg {
+                home_uuid,
+                root_uuid,
+                swap_uuid,
                 destination_file,
+                overwrite,
             } => {
-                gen_key_file(&initramfs_cfg, &argon2_opts, &destination_file).unwrap();
+                gen_cfg(home_uuid, root_uuid, swap_uuid, destination_file, overwrite).unwrap();
             }
-            InitramfsAction::RegenerateKey {
-                initramfs_cfg,
-                argon2_opts,
-                destination_file,
-            } => {
-                regen_key_file(&initramfs_cfg, &argon2_opts, &destination_file).unwrap();
-            }
-            InitramfsAction::GenerateInitramfs {
+            InitramfsAction::GenInit {
                 initramfs_cfg,
                 destination_directory,
                 argon2_opts,
@@ -226,32 +206,34 @@ fn generate(opts: &GenBootOpts) -> Result<(), String> {
     print_ok!("Read kernel image at {:?}", gen_opts.kernel_image_path);
     let efi_path = get_efi_path_string(&opts.efi_path)
         .map_err(|e| format!("Failed to convert supplied efi path: {e}"))?;
-    let (iv, salt) =
-        generate_crypt_randoms().map_err(|e| format!("Failed to generate random vectors: {e}"))?;
+    let (nonce, salt) =
+        generate_nonce_and_salt().map_err(|e| format!("Failed to generate random vectors: {e}"))?;
     let pass = prompt_passwords().map_err(|e| format!("Failed to get password: {e}"))?;
     let argon2_cfg = opts.argon2_opts.clone().into();
+    let metadata = EncryptionMetadata::new(nonce, salt, argon2_cfg);
     println!("[boot-rs]: Deriving encryption key.");
-    let (key, derive_key_time) = timed(|| derive_with_salt(pass.as_bytes(), salt, &argon2_cfg))?;
+    let (key, derive_key_time) =
+        timed(|| derive_key(pass.as_bytes(), metadata.salt(), metadata.argon2_cfg()))?;
     let key = key.map_err(|e| format!("Failed to derive a key from the password: {e}"))?;
     println!("[boot-rs]: Derived encryption key in {derive_key_time} seconds.");
     println!("[boot-rs]: Encrypting kernel image.");
-    let (encrypted, encrypt_time) = timed(|| encrypt_boot_image(&kernel_data, &key.key, iv))?;
+    let (encrypted, encrypt_time) = timed(|| encrypt(&kernel_data, &key, &metadata))?;
     println!("[boot-rs]: Encrypted kernel image in {encrypt_time} seconds.");
     // Insanity check.
+    let encrypted = encrypted?;
     if encrypted == kernel_data {
         return Err(
             "Encryption failed, output data same as input data (Sanity check triggered)."
                 .to_string(),
         );
     }
-    let mut enc_c = encrypted.clone();
     println!("[boot-rs]: Starting a test decryption.");
     let (decrypted, decryption_time) = timed(|| {
-        match hash_and_decrypt(&mut enc_c, pass.as_bytes(), salt, iv, &argon2_cfg) {
+        match hash_and_decrypt(&encrypted, pass.as_bytes()) {
             Ok(dec) => Ok(dec),
             Err(e) => {
                 match e {
-                    BootDecryptError::BadMagic => {
+                    BootDecryptError::InvalidContent => {
                         Err("Failed to decrypt encrypted boot image (better here than at boot time), failed to find magic in decrypted bytes".to_string())
                     }
                     BootDecryptError::Other(o) => {
@@ -269,11 +251,6 @@ fn generate(opts: &GenBootOpts) -> Result<(), String> {
     let cfg = BootCfg {
         device: &opts.efi_device,
         encrypted_path_on_device: &efi_path,
-        aes_initialization_vector: iv,
-        argon2_salt: salt,
-        argon2_mem_cost: argon2_cfg.0.mem_cost,
-        argon2_time_cost: argon2_cfg.0.time_cost,
-        argon2_lanes: argon2_cfg.0.lanes,
     };
     let cfg_out = cfg.serialize();
     println!(
@@ -301,12 +278,13 @@ fn generate(opts: &GenBootOpts) -> Result<(), String> {
 }
 
 #[inline]
-fn generate_crypt_randoms() -> Result<([u8; 16], [u8; 32]), String> {
-    let mut iv: [u8; 16] = [0u8; 16];
+fn generate_nonce_and_salt(
+) -> Result<([u8; REQUIRED_NONCE_LENGTH], [u8; REQUIRED_HASH_LENGTH]), String> {
+    let mut iv: [u8; REQUIRED_NONCE_LENGTH] = [0u8; REQUIRED_NONCE_LENGTH];
     let rand = ring::rand::SystemRandom::new();
     rand.fill(iv.as_mut_slice())
         .map_err(|e| format!("Failed to generate a random initialization vector: {e}"))?;
-    let mut salt: [u8; 32] = [0u8; 32];
+    let mut salt: [u8; REQUIRED_HASH_LENGTH] = [0u8; REQUIRED_HASH_LENGTH];
     rand.fill(salt.as_mut_slice())
         .map_err(|e| format!("Failed to generate a random salt: {e}"))?;
     Ok((iv, salt))

@@ -7,7 +7,7 @@ edition = "2021"
 
 [dependencies]
 boot-lib = { path = "../boot-lib" }
-clap = { version = "4.1.11", features = ["derive"] }
+clap = { version = "4.2.1", features = ["derive"] }
 hex = { version = "0.4.3", default-features = false, features = ["alloc"] }
 initramfs-lib = { path = "../initramfs-lib" }
 ring = "0.16.20"
