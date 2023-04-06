@@ -206,11 +206,11 @@ fn generate(opts: &GenBootOpts) -> Result<(), String> {
     print_ok!("Read kernel image at {:?}", gen_opts.kernel_image_path);
     let efi_path = get_efi_path_string(&opts.efi_path)
         .map_err(|e| format!("Failed to convert supplied efi path: {e}"))?;
-    let (iv, salt) =
-        generate_crypt_randoms().map_err(|e| format!("Failed to generate random vectors: {e}"))?;
+    let (nonce, salt) =
+        generate_nonce_and_salt().map_err(|e| format!("Failed to generate random vectors: {e}"))?;
     let pass = prompt_passwords().map_err(|e| format!("Failed to get password: {e}"))?;
     let argon2_cfg = opts.argon2_opts.clone().into();
-    let metadata = EncryptionMetadata::new(iv, salt, argon2_cfg);
+    let metadata = EncryptionMetadata::new(nonce, salt, argon2_cfg);
     println!("[boot-rs]: Deriving encryption key.");
     let (key, derive_key_time) =
         timed(|| derive_key(pass.as_bytes(), metadata.salt(), metadata.argon2_cfg()))?;
@@ -227,10 +227,9 @@ fn generate(opts: &GenBootOpts) -> Result<(), String> {
                 .to_string(),
         );
     }
-    let enc_c = encrypted.clone();
     println!("[boot-rs]: Starting a test decryption.");
     let (decrypted, decryption_time) = timed(|| {
-        match hash_and_decrypt(&enc_c, pass.as_bytes()) {
+        match hash_and_decrypt(&encrypted, pass.as_bytes()) {
             Ok(dec) => Ok(dec),
             Err(e) => {
                 match e {
@@ -279,7 +278,7 @@ fn generate(opts: &GenBootOpts) -> Result<(), String> {
 }
 
 #[inline]
-fn generate_crypt_randoms(
+fn generate_nonce_and_salt(
 ) -> Result<([u8; REQUIRED_NONCE_LENGTH], [u8; REQUIRED_HASH_LENGTH]), String> {
     let mut iv: [u8; REQUIRED_NONCE_LENGTH] = [0u8; REQUIRED_NONCE_LENGTH];
     let rand = ring::rand::SystemRandom::new();

@@ -219,7 +219,7 @@ mod tests {
     };
 
     #[test]
-    fn serde_test() {
+    fn metadata_serialize_deserialize() {
         let enc = EncryptionMetadata::new(
             [5u8; REQUIRED_NONCE_LENGTH],
             [7u8; REQUIRED_HASH_LENGTH],
