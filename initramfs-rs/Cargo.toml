@@ -6,7 +6,6 @@ edition = "2021"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-compiler_builtins = { version = "0.1.91", default-features = false, features = ["mem"] }
 dlmalloc = { git = "https://github.com/MarcusGrass/dlmalloc-rs.git", rev = "a8e9fc0d2c03a06810530a48abd37fecc71e8109", default-features = false }
 initramfs-lib = { path = "../initramfs-lib" }
 rusl = { path = "../../tiny-std/rusl", features = ["alloc"] }

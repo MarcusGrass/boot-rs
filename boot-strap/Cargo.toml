@@ -7,9 +7,10 @@ edition = "2021"
 
 [dependencies]
 boot-lib = { path = "../boot-lib" }
-clap = { version = "4.2.1", features = ["derive"] }
+dlmalloc = { git = "https://github.com/MarcusGrass/dlmalloc-rs.git", rev = "a8e9fc0d2c03a06810530a48abd37fecc71e8109", default-features = false }
 hex = { version = "0.4.3", default-features = false, features = ["alloc"] }
 initramfs-lib = { path = "../initramfs-lib" }
-ring = "0.16.20"
-rpassword = "7.2.0"
+tiny-cli = { path = "../../tiny-cli/tiny-cli" }
+tiny-std = { path = "../../tiny-std/tiny-std", features = ["alloc", "symbols", "start", "vdso"]}
+rusl = { path = "../../tiny-std/rusl", features = ["alloc"]}
 unix-print = "0.1.0"
