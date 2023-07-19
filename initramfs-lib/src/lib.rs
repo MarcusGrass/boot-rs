@@ -333,9 +333,7 @@ pub fn try_unmount() -> Result<()> {
     if let Err(e) = unmount("/sys\0") {
         unix_eprintln!("Failed to unmount sysfs {e}");
     }
-    if let Err(e) = unmount("/dev\0") {
-        unix_eprintln!("Failed to unmount devtmpfs {e}");
-    }
+    // Don't try to unmount /dev, we're using it
     Ok(())
 }
 

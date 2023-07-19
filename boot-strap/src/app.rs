@@ -307,15 +307,17 @@ fn generate_nonce_and_salt(
 #[inline]
 fn prompt_passwords() -> Result<String, String> {
     let mut pass_bytes = [0u8; 128];
+    unix_print::unix_println!("Enter kernel decryption password: ");
     let pass = get_pass(&mut pass_bytes)
         .map_err(|e| format!("Failed to get the decryption password from stdin: {e}"))?;
     let mut pass2_bytes = [0u8; 128];
+    unix_print::unix_println!("Repeat kernel decryption password: ");
     let pass2 = get_pass(&mut pass2_bytes)
         .map_err(|e| format!("Failed to get decryption password repetition from stdin: {e}"))?;
     if pass2 != pass {
         return Err("Password mismatch!".to_string());
     }
-    Ok(pass.to_string())
+    Ok(pass.trim().to_string())
 }
 
 #[inline]
@@ -330,7 +332,7 @@ fn timed<R, F: FnOnce() -> R>(func: F) -> Result<(R, f32), String> {
 
 #[inline]
 fn get_efi_path_string(input_path: &str) -> Result<String, String> {
-    let mut path = "\\".to_string();
+    let mut path = "".to_string();
     let orig_len = path.len();
     for component in input_path.split('/') {
         path.write_fmt(format_args!("{component}\\"))
