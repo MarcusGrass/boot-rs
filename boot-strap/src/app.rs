@@ -7,7 +7,7 @@ use boot_lib::crypt::{
 };
 use boot_lib::BootCfg;
 use core::fmt::Write;
-use initramfs_lib::print_ok;
+use initramfs_lib::{print_error, print_ok};
 use tiny_cli::{arg_parse, Parser};
 use tiny_std::linux::get_pass::get_pass;
 use tiny_std::process::exit;
@@ -192,7 +192,11 @@ pub(crate) fn run() {
             ) => {
                 let argon2_cfg =
                     create_argon2opts_maybe_default(argon2_mem, argon2_time, argon2_lanes);
-                generate_initramfs(&initramfs_cfg, &argon2_cfg, &destination_directory).unwrap();
+                if let Err(e) = generate_initramfs(&initramfs_cfg, &argon2_cfg, &destination_directory) {
+                    print_error!("Failed to generate initramfs: {e}");
+                    rusl::process::exit(1);
+                }
+                print_ok!("Successfully generated initramfs, don't forget to add initramfs-rs as `./init` to it.");
             }
             _ => panic!("Expected either gen_cfg or gen_init"),
         },

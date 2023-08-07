@@ -1,7 +1,7 @@
 use alloc::format;
 use alloc::string::{String, ToString};
 use boot_lib::crypt::{Argon2Cfg, Argon2Salt, REQUIRED_HASH_LENGTH};
-use initramfs_lib::{print_ok, read_cfg, write_cfg, Cfg};
+use initramfs_lib::{print_ok, read_cfg, write_cfg, Cfg, print_pending};
 use rusl::platform::Mode;
 use tiny_std::fs::OpenOptions;
 use tiny_std::io::{Read, Write};
@@ -76,7 +76,7 @@ pub(crate) fn gen_key_file(
     let mut salt = [0u8; REQUIRED_HASH_LENGTH];
     system_random(&mut salt).map_err(|e| format!("Failed to generate random salt {e}"))?;
     let mut pass_bytes = [0u8; 128];
-    unix_print::unix_print!("Enter password for transient crypt-file: ");
+    print_ok!("Enter password for transient crypt-file: ");
     let pwd = get_pass(&mut pass_bytes)
         .map_err(|e| format!("Failed to get password to test disk decryption {e}"))?;
     let pwd = pwd.trim_end_matches('\n');
@@ -92,8 +92,42 @@ pub(crate) fn gen_key_file(
         .open(dest)
         .map_err(|e| format!("Failed to create new file at {dest:?}: {e}"))?
         .write_all(&key.0)
-        .map_err(|e| format!("Failed to write regenerated key to destination {dest:?}: {e}"))
+        .map_err(|e| format!("Failed to write regenerated key to destination {dest:?}: {e}"))?;
+    for disk in [&initramfs_cfg.root_uuid, &initramfs_cfg.home_uuid, &initramfs_cfg.swap_uuid] {
+        print_pending!("Testing cryptokey for disk: {disk}");
+        test_cryptsetup_open(dest, disk)
+            .map_err(|e| format!("Failed to verify supplied passphrase works with provided disks: {e}"))?;
+    }
+    print_ok!("Successfully verified cryptokeys");
+    Ok(())
 }
+
+fn test_cryptsetup_open(key_file: &str, disk_uuid: &str) -> Result<(), String> {
+    let path = format!("/dev/disk/by-uuid/{disk_uuid}\0");
+    let mut child = tiny_std::process::Command::new("/sbin/cryptsetup\0")
+        .map_err(|e| format!("Failed to construct command: {e}"))?
+        .arg("luksOpen\0")
+        .map_err(|e| format!("Failed to add argument: {e}"))?
+        .arg("--key-file\0")
+        .map_err(|e| format!("Failed to add argument: {e}"))?
+        .arg(key_file)
+        .map_err(|e| format!("Failed to add argument: {e}"))?
+        .arg("--test-passphrase\0")
+        .map_err(|e| format!("Failed to add argument: {e}"))?
+        .arg("-v\0")
+        .map_err(|e| format!("Failed to add argument: {e}"))?
+        .arg(path)
+        .map_err(|e| format!("Failed to add argument: {e}"))?
+        .spawn()
+        .map_err(|e| format!("Failed to spawn cryptsetup: {e}"))?;
+    let res = child.wait()
+        .map_err(|e| format!("Failed to await child: {e}"))?;
+    if res != 0 {
+        return Err(format!("Failed to test opening disks with supplied passphrase, got cryptsetup exit code {res}"));
+    }
+    Ok(())
+}
+
 
 pub(crate) fn regen_key_file(
     cfg_file: &str,
@@ -110,7 +144,7 @@ pub(crate) fn regen_key_file(
         .try_into()
         .map_err(|e| format!("The provided salt is not 32 bytes {e:?}"))?;
     let mut pass_bytes = [0u8; 128];
-    unix_print::unix_print!("Enter password for transient crypt-file: ");
+    print_ok!("Enter password for transient crypt-file: ");
     let pwd = get_pass(&mut pass_bytes)
         .map_err(|e| format!("Failed to get password to test disk decryption {e}"))?;
     let pwd = pwd.trim_end_matches('\n');
@@ -124,7 +158,14 @@ pub(crate) fn regen_key_file(
         .open(dest)
         .map_err(|e| format!("Failed to create new file at {dest:?}: {e}"))?
         .write_all(&key.0)
-        .map_err(|e| format!("Failed to write regenerated key to destination {dest:?}: {e}"))
+        .map_err(|e| format!("Failed to write regenerated key to destination {dest:?}: {e}"))?;
+    for disk in [&initramfs_cfg.root_uuid, &initramfs_cfg.home_uuid, &initramfs_cfg.swap_uuid] {
+        print_pending!("Testing cryptokey for disk: {disk}");
+        test_cryptsetup_open(dest, disk)
+            .map_err(|e| format!("Failed to verify supplied passphrase works with provided disks: {e}"))?;
+    }
+    print_ok!("Successfully verified cryptokeys");
+    Ok(())
 }
 
 fn cfg_from_path(path: &str) -> Result<Cfg, String> {

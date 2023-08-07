@@ -8,5 +8,5 @@ edition = "2021"
 [dependencies]
 initramfs-lib = { workspace = true }
 rusl = { workspace = true, features = ["alloc"] }
-tiny-std = { workspace = true, default-features = false, features = ["start", "alloc", "executable", "allocator-provided"] }
+tiny-std = { workspace = true, features = ["alloc", "executable", "global-allocator"]}
 unix-print = { workspace = true }
