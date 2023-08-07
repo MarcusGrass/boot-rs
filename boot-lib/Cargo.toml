@@ -6,5 +6,5 @@ edition = "2021"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-aes-gcm = { version = "0.10.1", default-features = false, features = ["alloc", "aes"] }
-argon2 = { version = "0.5.0", default-features = false, features = ["alloc"] }
+aes-gcm = { workspace = true, default-features = false, features = ["alloc", "aes"] }
+argon2 = { workspace = true, default-features = false, features = ["alloc"] }

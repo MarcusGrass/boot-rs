@@ -6,6 +6,6 @@ edition = "2021"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-rusl = { path = "../../tiny-std/rusl", features = ["alloc"] }
-tiny-std = { path = "../../tiny-std/tiny-std", default-features = false, features = ["alloc"] }
-unix-print = { version = "0.1" }
+rusl = { workspace = true, features = ["alloc"] }
+tiny-std = { workspace = true, default-features = false, features = ["alloc"] }
+unix-print = { workspace = true }

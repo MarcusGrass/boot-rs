@@ -2,3 +2,16 @@
 resolver = "2"
 members = ["boot-lib", "boot-rs", "boot-strap", "initramfs-lib", "initramfs-rs"]
 
+[workspace.dependencies]
+boot-lib = { path = "boot-lib" }
+initramfs-lib = { path = "initramfs-lib" }
+tiny-cli = { path = "../tiny-cli/tiny-cli" }
+
+aes-gcm = { version = "0.10.2", default-features = false, features = ["alloc", "aes"] }
+argon2 = { version = "0.5.1", default-features = false, features = ["alloc"] }
+hex = { version = "0.4.3", default-features = false }
+rusl = { version = "0.1.0", default-features = false}
+tiny-std = { version = "0.1.0", default-features = false }
+uefi = { version = "0.24.0", features = ["alloc"] }
+uefi-services = "0.21.0"
+unix-print = "0.1.0"

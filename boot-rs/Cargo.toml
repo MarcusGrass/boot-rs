@@ -6,6 +6,6 @@ edition = "2021"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-boot-lib = { path = "../boot-lib" }
-uefi = { version = "0.20.0", features = ["alloc"] }
-uefi-services = "0.17.0"
+boot-lib = { workspace = true }
+uefi = { workspace = true, features = ["alloc"] }
+uefi-services = { workspace = true }

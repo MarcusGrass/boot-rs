@@ -79,8 +79,8 @@ pub(crate) fn gen_key_file(
     unix_print::unix_print!("Enter password for transient crypt-file: ");
     let pwd = get_pass(&mut pass_bytes)
         .map_err(|e| format!("Failed to get password to test disk decryption {e}"))?;
-    let pwd = pwd.trim();
-    let key = boot_lib::crypt::derive_key(pwd.as_bytes(), &Argon2Salt(salt), &argon2_cfg)
+    let pwd = pwd.trim_end_matches('\n');
+    let key = boot_lib::crypt::derive_key(pwd.as_bytes(), &Argon2Salt(salt), argon2_cfg)
         .map_err(|e| format!("Failed to derive a key with salt {e}"))?;
     initramfs_cfg.pass_salt = Some(hex::encode(salt));
     let cfg = cfg_file;
@@ -113,9 +113,9 @@ pub(crate) fn regen_key_file(
     unix_print::unix_print!("Enter password for transient crypt-file: ");
     let pwd = get_pass(&mut pass_bytes)
         .map_err(|e| format!("Failed to get password to test disk decryption {e}"))?;
-    let pwd = pwd.trim();
+    let pwd = pwd.trim_end_matches('\n');
     let argon2_cfg = argon2opts.clone();
-    let key = boot_lib::crypt::derive_key(pwd.as_bytes(), &Argon2Salt(salt_bytes), &argon2_cfg)
+    let key = boot_lib::crypt::derive_key(pwd.as_bytes(), &Argon2Salt(salt_bytes), argon2_cfg)
         .map_err(|e| format!("Failed to derive a key with salt {e}"))?;
     OpenOptions::new()
         .create_new(true)
@@ -155,6 +155,7 @@ pub(crate) fn generate_initramfs(
     let copy_from_fs = [
         ("/bin/busybox", format!("{dest}/bin/busybox")),
         ("/sbin/cryptsetup", format!("{dest}/sbin/cryptsetup")),
+        ("/sbin/e2fsck.static", format!("{dest}/sbin/e2fsck")),
     ];
     for (src, dest) in copy_from_fs {
         static_check_copy(src, &dest)?;
@@ -199,7 +200,7 @@ fn static_check_copy(src: &str, dest: &str) -> Result<(), String> {
         .read_to_string(&mut output)
         .unwrap();
     if status != 0 {
-        return Err(format!("Failed to run `file` command on {src:?} to check if statically linked, got exit status {}", status));
+        return Err(format!("Failed to run `file` command on {src:?} to check if statically linked, got exit status {status}"));
     }
     if !output.contains("statically linked") && !output.contains("static-pie linked") {
         return Err(format!("`file` command on {src:?} produces output that did not contain the words 'statically linked' or 'static-pie linked' suggesting it's not statically linked, which would produce issues."));

@@ -4,7 +4,7 @@ use crate::error::{Error, Result};
 use alloc::string::{String, ToString};
 use alloc::{format, vec};
 use rusl::error::Errno;
-use rusl::platform::FilesystemType;
+use rusl::platform::{FilesystemType, Mountflags};
 use rusl::unistd::{mount, swapon, unmount};
 use tiny_std::io::{Read, Write};
 use tiny_std::linux::get_pass::get_pass;
@@ -33,12 +33,47 @@ pub fn full_init(cfg: &Cfg) -> Result<()> {
 }
 
 pub fn mount_pseudo_filesystems() -> Result<()> {
-    mount::<_, _, &'static str>("none\0", "/proc\0", FilesystemType::Proc, 0, None)
-        .map_err(|e| Error::MountPseudo(format!("Failed to mount proc types at /proc: {e}")))?;
-    mount::<_, _, &'static str>("none\0", "/sys\0", FilesystemType::Sysfs, 0, None)
-        .map_err(|e| Error::MountPseudo(format!("Failed to mount sysfs types at /sys: {e}")))?;
-    mount::<_, _, &'static str>("none\0", "/dev\0", FilesystemType::Devtmpfs, 0, None)
-        .map_err(|e| Error::MountPseudo(format!("Failed to mount devtmpfs at /dev: {e}")))?;
+    mount::<_, _, &'static str>(
+        "none\0",
+        "/proc\0",
+        FilesystemType::PROC,
+        Mountflags::empty(),
+        None,
+    )
+    .map_err(|e| Error::MountPseudo(format!("Failed to mount proc types at /proc: {e}")))?;
+    mount::<_, _, &'static str>(
+        "none\0",
+        "/sys\0",
+        FilesystemType::SYSFS,
+        Mountflags::empty(),
+        None,
+    )
+    .map_err(|e| Error::MountPseudo(format!("Failed to mount sysfs types at /sys: {e}")))?;
+    mount::<_, _, &'static str>(
+        "none\0",
+        "/dev\0",
+        FilesystemType::DEVTMPFS,
+        Mountflags::empty(),
+        None,
+    )
+    .map_err(|e| Error::MountPseudo(format!("Failed to mount devtmpfs at /dev: {e}")))?;
+    Ok(())
+}
+
+fn check_fs(dev: &str) -> Result<()> {
+    let mut cmd = Command::new("/sbin/e2fsck\0")
+        .map_err(|e| Error::Spawn(format!("Failed to create command /sbin/e2fsck: {e}")))?
+        .arg("-p\0")
+        .map_err(|e| Error::Spawn(format!("Failed to add arg -r to command /sbin/e2fsck: {e}")))?
+        .arg(dev)
+        .map_err(|e| Error::Spawn(format!("Failed to add arg '{dev}': {e}")))?
+        .spawn()
+        .map_err(|e| Error::Spawn(format!("Failed to spawn /sbin/e2fsck {e}")))?;
+    let exit = cmd.wait().unwrap();
+    if exit != 0 {
+        return Err(Error::Spawn(format!("Fschk exited with code {exit}")));
+    }
+
     Ok(())
 }
 
@@ -58,18 +93,25 @@ pub fn mount_user_filesystems(cfg: &Cfg) -> Result<()> {
         print_pending!("Enter passphrase for decryption: ");
         let pass = get_pass(&mut pass_buf)
             .map_err(|e| Error::Crypt(format!("Failed to get password for decryption: {e}")))?;
-        AuthMethod::Pass(pass.trim().to_string())
+        AuthMethod::Pass(pass.trim_end_matches('\n').to_string())
     };
     let confirmed_auth = try_decrypt_fallback_pass(&parts.root, "croot", auth_method)?;
     open_cryptodisk(&parts.swap, "cswap", &confirmed_auth)
         .map_err(|e| Error::Mount(format!("Failed to decrypt swap partition {e:?}")))?;
     open_cryptodisk(&parts.home, "chome", &confirmed_auth)
         .map_err(|e| Error::Mount(format!("Failed to decrypt home partition {e:?}")))?;
+    if let Err(e) = check_fs("/dev/mapper/croot\0") {
+        print_error!("Failed to check root-fs: {e:?}");
+    }
+    if let Err(e) = check_fs("/dev/mapper/chome\0") {
+        print_error!("Failed to check home-fs: {e:?}");
+    };
+
     mount::<_, _, &'static str>(
-        "/dev/mapper/croot",
+        "/dev/mapper/croot\0",
         "/mnt/root\0",
-        FilesystemType::Ext4,
-        0,
+        FilesystemType::EXT4,
+        Mountflags::empty(),
         None,
     )
     .map_err(|e| {
@@ -79,10 +121,10 @@ pub fn mount_user_filesystems(cfg: &Cfg) -> Result<()> {
         ))
     })?;
     mount::<_, _, &'static str>(
-        "/dev/mapper/chome",
+        "/dev/mapper/chome\0",
         "/mnt/root/home\0",
-        FilesystemType::Ext4,
-        0,
+        FilesystemType::EXT4,
+        Mountflags::empty(),
         None,
     )
     .map_err(|e| {
@@ -91,7 +133,7 @@ pub fn mount_user_filesystems(cfg: &Cfg) -> Result<()> {
             parts.home
         ))
     })?;
-    swapon("/dev/mapper/cswap", 0)
+    swapon("/dev/mapper/cswap\0", 0)
         .map_err(|e| Error::Mount(format!("Failed to swapon {}: {e:?}", parts.swap)))?;
     Ok(())
 }
@@ -110,10 +152,12 @@ fn try_decrypt_fallback_pass(
                 print_error!("Failed to decrypt root partition: {e:?}, will try again with passphrase, attempt {i}");
                 print_pending!("Enter passphrase for decryption: ");
                 let mut pass_buffer = [0u8; PASS_BUF_CAP];
-                let pass = get_pass(&mut pass_buffer).map_err(|e| {
-                    Error::Crypt(format!("Failed to get password for decryption: {e}"))
-                })?;
-                let try_auth = AuthMethod::Pass(pass.trim().to_string());
+                let pass = get_pass(&mut pass_buffer)
+                    .map_err(|e| {
+                        Error::Crypt(format!("Failed to get password for decryption: {e}"))
+                    })?
+                    .trim();
+                let try_auth = AuthMethod::Pass(pass.trim_end_matches('\n').to_string());
                 match open_cryptodisk(root_uuid, root_target, &try_auth) {
                     Ok(_) => {
                         print_ok!("It's your lucky day, continuing.");

@@ -317,7 +317,7 @@ fn prompt_passwords() -> Result<String, String> {
     if pass2 != pass {
         return Err("Password mismatch!".to_string());
     }
-    Ok(pass.trim().to_string())
+    Ok(pass.trim_end_matches('\n').to_string())
 }
 
 #[inline]
@@ -325,14 +325,14 @@ fn timed<R, F: FnOnce() -> R>(func: F) -> Result<(R, f32), String> {
     let now = SystemTime::now();
     let res = (func)();
     let elapsed = now.elapsed().ok_or_else(|| {
-        format!("Failed to get elapsed time, system misconfiguration, or we're in a time vortex")
+        "Failed to get elapsed time, system misconfiguration, or we're in a time vortex".to_string()
     })?;
     Ok((res, elapsed.as_secs_f32()))
 }
 
 #[inline]
 fn get_efi_path_string(input_path: &str) -> Result<String, String> {
-    let mut path = "".to_string();
+    let mut path = String::new();
     let orig_len = path.len();
     for component in input_path.split('/') {
         path.write_fmt(format_args!("{component}\\"))

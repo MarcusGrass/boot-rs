@@ -6,11 +6,10 @@ edition = "2021"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-boot-lib = { path = "../boot-lib" }
-dlmalloc = { git = "https://github.com/MarcusGrass/dlmalloc-rs.git", rev = "a8e9fc0d2c03a06810530a48abd37fecc71e8109", default-features = false }
-hex = { version = "0.4.3", default-features = false, features = ["alloc"] }
-initramfs-lib = { path = "../initramfs-lib" }
-tiny-cli = { path = "../../tiny-cli/tiny-cli" }
-tiny-std = { path = "../../tiny-std/tiny-std", features = ["alloc", "symbols", "start", "vdso"]}
-rusl = { path = "../../tiny-std/rusl", features = ["alloc"]}
-unix-print = "0.1.0"
+boot-lib = { workspace = true }
+hex = { workspace = true, default-features = false, features = ["alloc"] }
+initramfs-lib = { workspace = true }
+tiny-cli = { workspace = true }
+tiny-std = { workspace = true, features = ["alloc", "executable", "global-allocator"]}
+rusl = { workspace = true, features = ["alloc"]}
+unix-print = { workspace = true }
