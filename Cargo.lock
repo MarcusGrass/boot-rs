@@ -365,6 +365,8 @@ dependencies = [
 [[package]]
 name = "tiny-cli"
 version = "0.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "964953c31a5c985963bc3e623994c02c66a1920fa4e633a945959413e57f4c4d"
 
 [[package]]
 name = "tiny-std"
