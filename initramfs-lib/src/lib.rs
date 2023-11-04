@@ -5,6 +5,7 @@ use alloc::string::{String, ToString};
 use alloc::{format, vec};
 use rusl::error::Errno;
 use rusl::platform::{FilesystemType, Mountflags};
+use rusl::string::unix_str::{UnixStr, UnixString};
 use rusl::unistd::{mount, swapon, unmount};
 use tiny_std::io::{Read, Write};
 use tiny_std::linux::get_pass::get_pass;
@@ -32,26 +33,31 @@ pub fn full_init(cfg: &Cfg) -> Result<()> {
     Err(e)
 }
 
+const MOUNT_NONE_SOURCE: &UnixStr = UnixStr::from_str_checked("none\0");
+const PROC: &UnixStr = UnixStr::from_str_checked("proc\0");
+const SYS: &UnixStr = UnixStr::from_str_checked("sys\0");
+const DEV: &UnixStr = UnixStr::from_str_checked("dev\0");
+
 pub fn mount_pseudo_filesystems() -> Result<()> {
-    mount::<_, _, &'static str>(
-        "none\0",
-        "/proc\0",
+    mount(
+        MOUNT_NONE_SOURCE,
+        PROC,
         FilesystemType::PROC,
         Mountflags::empty(),
         None,
     )
     .map_err(|e| Error::MountPseudo(format!("Failed to mount proc types at /proc: {e}")))?;
-    mount::<_, _, &'static str>(
-        "none\0",
-        "/sys\0",
+    mount(
+        MOUNT_NONE_SOURCE,
+        SYS,
         FilesystemType::SYSFS,
         Mountflags::empty(),
         None,
     )
     .map_err(|e| Error::MountPseudo(format!("Failed to mount sysfs types at /sys: {e}")))?;
-    mount::<_, _, &'static str>(
-        "none\0",
-        "/dev\0",
+    mount(
+        MOUNT_NONE_SOURCE,
+        DEV,
         FilesystemType::DEVTMPFS,
         Mountflags::empty(),
         None,
@@ -60,13 +66,14 @@ pub fn mount_pseudo_filesystems() -> Result<()> {
     Ok(())
 }
 
-fn check_fs(dev: &str) -> Result<()> {
-    let mut cmd = Command::new("/sbin/e2fsck\0")
+const E2FSCK: &UnixStr = UnixStr::from_str_checked("/sbin/e2fsck\0");
+
+fn check_fs(dev: &UnixStr) -> Result<()> {
+    const P: &UnixStr = UnixStr::from_str_checked("-p\0");
+    let mut cmd = Command::new(E2FSCK)
         .map_err(|e| Error::Spawn(format!("Failed to create command /sbin/e2fsck: {e}")))?
-        .arg("-p\0")
-        .map_err(|e| Error::Spawn(format!("Failed to add arg -r to command /sbin/e2fsck: {e}")))?
+        .arg(P)
         .arg(dev)
-        .map_err(|e| Error::Spawn(format!("Failed to add arg '{dev}': {e}")))?
         .spawn()
         .map_err(|e| Error::Spawn(format!("Failed to spawn /sbin/e2fsck {e}")))?;
     let exit = cmd.wait().unwrap();
@@ -78,38 +85,47 @@ fn check_fs(dev: &str) -> Result<()> {
 }
 
 enum AuthMethod {
-    File(String),
+    File(UnixString),
     Pass(String),
 }
 
 const PASS_BUF_CAP: usize = 64;
+const DEV_MAPPER_CROOT: &UnixStr = UnixStr::from_str_checked("/dev/mapper/croot\0");
+const DEV_MAPPER_CHOME: &UnixStr = UnixStr::from_str_checked("/dev/mapper/chome\0");
+const DEV_MAPPER_CSWAP: &UnixStr = UnixStr::from_str_checked("/dev/mapper/cswap\0");
+const MNT_ROOT: &UnixStr = UnixStr::from_str_checked("/mnt/root\0");
+const MNT_ROOT_HOME: &UnixStr = UnixStr::from_str_checked("/mnt/root/home\0");
+
 pub fn mount_user_filesystems(cfg: &Cfg) -> Result<()> {
     let parts = get_partitions(cfg)
         .map_err(|e| Error::Mount(format!("Failed to find partitions {e:?}")))?;
     let mut pass_buf = [0u8; PASS_BUF_CAP];
     let auth_method = if let Some(file) = cfg.crypt_file.clone() {
-        AuthMethod::File(file)
+        AuthMethod::File(UnixString::try_from_string(file)
+            .map_err(|_e| Error::Crypt("Failed to convert crypt file to a unix str".to_string()))?)
     } else {
         print_pending!("Enter passphrase for decryption: ");
         let pass = get_pass(&mut pass_buf)
             .map_err(|e| Error::Crypt(format!("Failed to get password for decryption: {e}")))?;
         AuthMethod::Pass(pass.trim_end_matches('\n').to_string())
     };
-    let confirmed_auth = try_decrypt_fallback_pass(&parts.root, "croot", auth_method)?;
-    open_cryptodisk(&parts.swap, "cswap", &confirmed_auth)
+    let confirmed_auth = try_decrypt_fallback_pass(&parts.root, tiny_std::unix_lit!("croot"), auth_method)?;
+    open_cryptodisk(&UnixString::try_from_str(&parts.swap)
+        .map_err(|_e| Error::Crypt("Failed to convert swap uuid to a unix str".to_string()))?, tiny_std::unix_lit!("cswap"), &confirmed_auth)
         .map_err(|e| Error::Mount(format!("Failed to decrypt swap partition {e:?}")))?;
-    open_cryptodisk(&parts.home, "chome", &confirmed_auth)
+    open_cryptodisk(&UnixString::try_from_str(&parts.home)
+        .map_err(|_e| Error::Crypt("Failed to convert home uuid to a unix str".to_string()))?, tiny_std::unix_lit!("chome"), &confirmed_auth)
         .map_err(|e| Error::Mount(format!("Failed to decrypt home partition {e:?}")))?;
-    if let Err(e) = check_fs("/dev/mapper/croot\0") {
+    if let Err(e) = check_fs(DEV_MAPPER_CROOT) {
         print_error!("Failed to check root-fs: {e:?}");
     }
-    if let Err(e) = check_fs("/dev/mapper/chome\0") {
+    if let Err(e) = check_fs(DEV_MAPPER_CHOME) {
         print_error!("Failed to check home-fs: {e:?}");
     };
 
-    mount::<_, _, &'static str>(
-        "/dev/mapper/croot\0",
-        "/mnt/root\0",
+    mount(
+        DEV_MAPPER_CROOT,
+        MNT_ROOT,
         FilesystemType::EXT4,
         Mountflags::empty(),
         None,
@@ -120,9 +136,9 @@ pub fn mount_user_filesystems(cfg: &Cfg) -> Result<()> {
             parts.root
         ))
     })?;
-    mount::<_, _, &'static str>(
-        "/dev/mapper/chome\0",
-        "/mnt/root/home\0",
+    mount(
+        DEV_MAPPER_CHOME,
+        MNT_ROOT_HOME,
         FilesystemType::EXT4,
         Mountflags::empty(),
         None,
@@ -133,17 +149,19 @@ pub fn mount_user_filesystems(cfg: &Cfg) -> Result<()> {
             parts.home
         ))
     })?;
-    swapon("/dev/mapper/cswap\0", 0)
+    swapon(DEV_MAPPER_CSWAP, 0)
         .map_err(|e| Error::Mount(format!("Failed to swapon {}: {e:?}", parts.swap)))?;
     Ok(())
 }
 
 fn try_decrypt_fallback_pass(
     root_uuid: &str,
-    root_target: &str,
+    root_target: &UnixStr,
     method: AuthMethod,
 ) -> Result<AuthMethod> {
-    match open_cryptodisk(root_uuid, root_target, &method) {
+    let root_uuid_unix = UnixString::try_from_str(root_uuid)
+        .map_err(|_e| Error::Crypt(format!("Failed to convert root uuid {root_uuid} to a unix str")))?;
+    match open_cryptodisk(&root_uuid_unix, root_target, &method) {
         Ok(_) => Ok(method),
         Err(e) => {
             let mut e = e;
@@ -158,7 +176,7 @@ fn try_decrypt_fallback_pass(
                     })?
                     .trim();
                 let try_auth = AuthMethod::Pass(pass.trim_end_matches('\n').to_string());
-                match open_cryptodisk(root_uuid, root_target, &try_auth) {
+                match open_cryptodisk(&root_uuid_unix, root_target, &try_auth) {
                     Ok(_) => {
                         print_ok!("It's your lucky day, continuing.");
                         return Ok(try_auth);
@@ -173,21 +191,15 @@ fn try_decrypt_fallback_pass(
     }
 }
 
+const BIN_BUSYBOX: &UnixStr = UnixStr::from_str_checked("/bin/busybox\0");
+
 pub fn run_mdev() -> Result<()> {
-    let mut cmd = Command::new("/bin/busybox\0")
+    const MDEV: &UnixStr = UnixStr::from_str_checked("mdev\0");
+    const S: &UnixStr = UnixStr::from_str_checked("-s\0");
+    let mut cmd = Command::new(BIN_BUSYBOX)
         .map_err(|e| Error::Spawn(format!("Failed to create command /bin/busybox: {e}")))?;
-    cmd.arg("mdev\0")
-        .map_err(|e| {
-            Error::Spawn(format!(
-                "Failed to append command mdev to /bin/busybox: {e}"
-            ))
-        })?
-        .arg("-s\0")
-        .map_err(|e| {
-            Error::Spawn(format!(
-                "Failed to append command -s to '/bin/busybox mdev: {e}"
-            ))
-        })?;
+    cmd.arg(MDEV)
+        .arg(S);
     let exit = cmd
         .spawn()
         .map_err(|e| Error::Spawn(format!("Failed to spawn /bin/busybox mdev -s: {e}")))?
@@ -213,10 +225,10 @@ pub struct Partitions {
 }
 
 pub fn get_partitions(cfg: &Cfg) -> Result<Partitions> {
-    let mut cmd = Command::new("/bin/busybox\0")
+    const BLKID: &UnixStr = UnixStr::from_str_checked("blkid\0");
+    let mut cmd = Command::new(BIN_BUSYBOX)
         .map_err(|e| Error::Spawn(format!("Failed to instantiate busybox command {e}")))?;
-    cmd.arg("blkid\0")
-        .map_err(|e| Error::Spawn(format!("Failed to append blkid to busybox command {e}")))?;
+    cmd.arg(BLKID);
     let tgt = spawn_await_stdout(cmd, 4096)?;
     let mut root = None;
     let mut swap = None;
@@ -262,29 +274,33 @@ pub fn get_partitions(cfg: &Cfg) -> Result<Partitions> {
     })
 }
 
+const CRYPTSETUP: &UnixStr = UnixStr::from_str_checked("/sbin/cryptsetup\0");
+
 pub(crate) fn open_cryptodisk(
-    device_name: &str,
-    target_name: &str,
+    device_name: &UnixStr,
+    target_name: &UnixStr,
     auth: &AuthMethod,
 ) -> Result<()> {
+    const KEY_FILE: &UnixStr = UnixStr::from_str_checked("keyfile\0");
+    const KEY_FILE_ARG: &UnixStr = UnixStr::from_str_checked("--key-file\0");
+    const OPEN: &UnixStr = UnixStr::from_str_checked("open\0");
     let key_file = match auth {
         AuthMethod::File(f) => f.clone(),
         AuthMethod::Pass(pass) => {
-            let key_file = "keyfile";
-            match tiny_std::fs::metadata(key_file) {
-                Ok(_) => key_file.to_string(),
+            match tiny_std::fs::metadata(KEY_FILE) {
+                Ok(_) => UnixString::from(KEY_FILE),
                 Err(e) => {
                     if e.matches_errno(Errno::ENOENT) {
                         let mut file = tiny_std::fs::OpenOptions::new()
                             .write(true)
                             .create(true)
-                            .open(key_file)
+                            .open(KEY_FILE)
                             .map_err(|e| {
                                 Error::Crypt(format!("Failed to open/create keyfile {e}"))
                             })?;
                         file.write_all(pass.as_bytes())
                             .map_err(|e| Error::Crypt(format!("Failed to write keyfile {e}")))?;
-                        key_file.to_string()
+                        UnixString::from(KEY_FILE)
                     } else {
                         return Err(Error::Crypt(format!(
                             "Failed to check for existing keyfile {e}"
@@ -295,42 +311,17 @@ pub(crate) fn open_cryptodisk(
         }
     };
 
-    let mut child = tiny_std::process::Command::new("/sbin/cryptsetup")
+    let mut child = tiny_std::process::Command::new(CRYPTSETUP)
         .map_err(|e| {
             Error::Crypt(format!(
                 "Failed to instantiate command /sbin/cryptsetup {e}"
             ))
         })?
-        .arg("--key-file")
-        .map_err(|e| {
-            Error::Crypt(format!(
-                "Failed to instantiate command /sbin/cryptsetup adding arg --key-file {e}"
-            ))
-        })?
+        .arg(KEY_FILE_ARG)
         .arg(&key_file)
-        .map_err(|e| {
-            Error::Crypt(format!(
-                "Failed to instantiate command /sbin/cryptsetup adding arg {key_file}: {e}"
-            ))
-        })?
-        .arg("open")
-        .map_err(|e| {
-            Error::Crypt(format!(
-                "Failed to instantiate command /sbin/cryptsetup adding arg open {e}"
-            ))
-        })?
+        .arg(OPEN)
         .arg(device_name)
-        .map_err(|e| {
-            Error::Crypt(format!(
-                "Failed to instantiate command /sbin/cryptsetup, adding device {device_name}: {e}"
-            ))
-        })?
         .arg(target_name)
-        .map_err(|e| {
-            Error::Crypt(format!(
-                "Failed to instantiate command /sbin/cryptsetup, adding target {target_name}: {e}"
-            ))
-        })?
         .spawn()
         .map_err(|e| Error::Crypt(format!("Failed to spawn /sbin/cryptsetup {e}")))?;
     let res = child.wait().map_err(|e| {
@@ -369,12 +360,14 @@ pub(crate) fn spawn_await_stdout(mut cmd: Command, buf_size: usize) -> Result<St
         .map_err(|e| Error::Spawn(format!("Failed to convert child stdout to utf8 {e}")))
 }
 
+const ABS_PROC: &UnixStr = UnixStr::from_str_checked("/proc\0");
+const ABS_SYS: &UnixStr = UnixStr::from_str_checked("/sys\0");
 // This can fail without it necessarily being a problem
 pub fn try_unmount() -> Result<()> {
-    if let Err(e) = unmount("/proc\0") {
+    if let Err(e) = unmount(ABS_PROC) {
         unix_eprintln!("Failed to unmount proc fs: {e}");
     }
-    if let Err(e) = unmount("/sys\0") {
+    if let Err(e) = unmount(ABS_SYS) {
         unix_eprintln!("Failed to unmount sysfs {e}");
     }
     // Don't try to unmount /dev, we're using it
@@ -382,25 +375,13 @@ pub fn try_unmount() -> Result<()> {
 }
 
 pub fn switch_root() -> Error {
-    let mut cmd = match Command::new("/bin/busybox\0") {
+    const SWITCH_ROOT: &UnixStr = UnixStr::from_str_checked("switch_root\0");
+    const SBIN_INIT: &UnixStr = UnixStr::from_str_checked("/sbin/init\0");
+    let mut cmd = match Command::new(BIN_BUSYBOX) {
         Ok(cmd) => cmd,
         Err(e) => return Error::Spawn(format!("Failed to create command /bin/busybox: {e}")),
     };
-    if let Err(e) = cmd.arg("switch_root\0") {
-        return Error::Spawn(format!(
-            "Failed to append command switch_root to /bin/busybox: {e}"
-        ));
-    }
-    if let Err(e) = cmd.arg("/mnt/root\0") {
-        return Error::Spawn(format!(
-            "Failed to append command /mnt/root to '/bin/busybox switch_root': {e}"
-        ));
-    }
-    if let Err(e) = cmd.arg("/sbin/init\0") {
-        return Error::Spawn(format!(
-            "Failed to append command /sbin/init to '/bin/busybox switch_root /mnt/root': {e}"
-        ));
-    }
+    cmd.arg(SWITCH_ROOT).arg(MNT_ROOT).arg(SBIN_INIT);
     let e = cmd.exec();
     Error::Spawn(format!(
         "Failed to execute '/bin/busybox switch_root /mnt/root /sbin/init': {e}"
@@ -408,8 +389,9 @@ pub fn switch_root() -> Error {
 }
 
 pub fn bail_to_shell() -> Error {
+    const SH: &UnixStr = UnixStr::from_str_checked("sh\0");
     unix_eprintln!("Bailing to shell, good luck.");
-    let mut cmd = match Command::new("/bin/busybox\0") {
+    let mut cmd = match Command::new(BIN_BUSYBOX) {
         Ok(cmd) => cmd,
         Err(e) => {
             return Error::Bail(format!(
@@ -417,11 +399,7 @@ pub fn bail_to_shell() -> Error {
             ))
         }
     };
-    if let Err(e) = cmd.arg("sh\0") {
-        return Error::Bail(format!(
-            "Failed to append command /sh to '/bin/busybox' when bailing: {e}"
-        ));
-    }
+    cmd.arg(SH);
     let e = cmd.exec();
     Error::Bail(format!(
         "Failed to run exec on '/bin/busybox sh' when bailing: {e}"
@@ -437,9 +415,9 @@ pub struct Cfg {
     pub crypt_file: Option<String>,
 }
 
-pub fn read_cfg(cfg_path: &str) -> Result<Cfg> {
+pub fn read_cfg(cfg_path: &UnixStr) -> Result<Cfg> {
     let content = tiny_std::fs::read_to_string(cfg_path)
-        .map_err(|e| Error::Cfg(format!("Failed to read cfg at {cfg_path}: {e}")))?;
+        .map_err(|e| Error::Cfg(format!("Failed to read cfg at {cfg_path:?}: {e}")))?;
     let mut root_uuid = None;
     let mut swap_uuid = None;
     let mut home_uuid = None;
@@ -471,17 +449,17 @@ pub fn read_cfg(cfg_path: &str) -> Result<Cfg> {
     }
     Ok(Cfg {
         root_uuid: root_uuid
-            .ok_or_else(|| Error::Cfg(format!("No root uuid found in cfg at path {cfg_path}")))?,
+            .ok_or_else(|| Error::Cfg(format!("No root uuid found in cfg at path {cfg_path:?}")))?,
         swap_uuid: swap_uuid
-            .ok_or_else(|| Error::Cfg(format!("No swap uuid found in cfg at path {cfg_path}")))?,
+            .ok_or_else(|| Error::Cfg(format!("No swap uuid found in cfg at path {cfg_path:?}")))?,
         home_uuid: home_uuid
-            .ok_or_else(|| Error::Cfg(format!("No home uuid found in cfg at path {cfg_path}")))?,
+            .ok_or_else(|| Error::Cfg(format!("No home uuid found in cfg at path {cfg_path:?}")))?,
         pass_salt,
         crypt_file,
     })
 }
 
-pub fn write_cfg(cfg: &Cfg, path: &str) -> core::result::Result<(), String> {
+pub fn write_cfg(cfg: &Cfg, path: &UnixStr) -> core::result::Result<(), String> {
     let pass = if let Some(salt) = &cfg.pass_salt {
         format!("password_salt={salt}\n")
     } else {
@@ -501,9 +479,9 @@ pub fn write_cfg(cfg: &Cfg, path: &str) -> core::result::Result<(), String> {
         .create(true)
         .truncate(true)
         .open(path)
-        .map_err(|e| format!("Failed to open file for reading at {path}: {e}"))?;
+        .map_err(|e| format!("Failed to open file for reading at {path:?}: {e}"))?;
     file.write_all(content.as_bytes())
-        .map_err(|e| format!("Failed to write content into file at {path}: {e}"))?;
+        .map_err(|e| format!("Failed to write content into file at {path:?}: {e}"))?;
     Ok(())
 }
 
@@ -515,7 +493,7 @@ mod tests {
     #[test]
     #[ignore]
     fn test_blkid() {
-        let cfg = read_cfg("/home/gramar/code/rust/yubi-initramfs/initramfs.cfg").unwrap();
+        let cfg = read_cfg(UnixStr::from_str_checked("/home/gramar/code/rust/yubi-initramfs/initramfs.cfg\0")).unwrap();
         let parts = get_partitions(&cfg).unwrap();
         unix_eprintln!("{parts:?}");
     }

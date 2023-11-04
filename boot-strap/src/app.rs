@@ -7,137 +7,146 @@ use boot_lib::crypt::{
 };
 use boot_lib::BootCfg;
 use core::fmt::Write;
+use rusl::string::unix_str::UnixStr;
 use initramfs_lib::{print_error, print_ok};
-use tiny_cli::{arg_parse, Parser};
+use tiny_cli::{ArgParse, Subcommand};
 use tiny_std::linux::get_pass::get_pass;
-use tiny_std::process::exit;
 use tiny_std::time::SystemTime;
 use tiny_std::unix::random::system_random;
 
-arg_parse!(
-    #[name("Initramfs gen-cfg")]
-    #[description("Generates initramfs configuration")]
-    struct InitramfsGenCfgOpts {
-        #[short("h"), long("home-uuid"), description("UUID for the home partition")]
-        home_uuid: String,
-        #[short("r"), long("root-uuid"), description("UUID for the root partition")]
-        root_uuid: String,
-        #[short("s"), long("swap-uuid"), description("UUID for the swap partition")]
-        swap_uuid: String,
-        #[short("o"), long("overwrite"), description("Overwrite the current file if present.
-        Probably not good, since we generate a cryptsetup key from the generated salt,
-        if key that has already been registered, this salt shouldn't change")]
-        overwrite: bool,
-        #[optional]
-        #[short("d"), long("destination-file"), description("Destination file")]
-        destination_file: Option<String>,
-    }
-);
+/// Generate initramfs configuration
+#[derive(Debug, ArgParse)]
+#[cli(help_path = "gen-cfg")]
+struct InitramfsGenCfgOpts {
+    /// UUID for the home partition
+    #[cli(short = "h", long = "home-uuid")]
+    home_uuid: String,
+    /// UUID for the root partition
+    #[cli(short = "r", long = "root-uuid")]
+    root_uuid: String,
+    /// UUID for the swap partition
+    #[cli(short = "s", long = "swap-uuid")]
+    swap_uuid: String,
+    /// Overwrite the current file if present.
+    ///  Probably not good, since we generate a cryptsetup key from the generated salt,
+    ///  if key that has already been registered, this salt shouldn't change
+    #[cli(short = "o", long = "overwrite")]
+    overwrite: bool,
+    /// Destination file
+    #[cli(short = "d", long = "destination-file")]
+    destination_file: Option<&'static UnixStr>,
+}
+#[derive(Debug, ArgParse)]
+#[cli(help_path = "gen-init")]
+struct InitramfsGenInitOpts {
+    /// Configuration file containing uuids of cryptdevices
+    #[cli(short = "i", long = "initramfs-cfg")]
+    initramfs_cfg: &'static UnixStr,
+    /// Directory where the initramfs should be created, will wipe a previous initramfs if it exists there.
+    /// Ex: /root/initramfs
+    #[cli(short = "d", long = "destination-file")]
+    destination_directory: &'static UnixStr,
 
-arg_parse!(
-    #[name("Initramfs gen-init")]
-    #[description("Generates initramfs")]
-    struct InitramfsGenInitOpts {
-        #[short("i"), long("initramfs-cfg"), description("Configuration file containing uuids of cryptdevices")]
-        initramfs_cfg: String,
-        #[short("d"), long("destination-file"), description("Directory where the initramfs should be created, will wipe a previous initramfs if it exists there.
-        Ex: /root/initramfs")]
-        destination_directory: String,
+    /// Argon 2 mem cost.
+    /// The password will be converted to a 32-byte AES key using argon2, this specifies a custom
+    /// mem cost for that algorithm.
+    /// If omitted, a default value will be used.
+    #[cli(short = "m", long = "argon2-mem")]
+    argon2_mem: Option<u32>,
 
-        #[optional]
-        #[short("m"), long("argon2-mem"), description("Argon 2 mem cost.
-        The password will be converted to a 32-byte AES key using argon2, this specifies a custom
-        mem cost for that algorithm.
-        If omitted, a default value will be used.")]
-        argon2_mem: Option<u32>,
-        #[optional]
-        #[short("t"), long("argon2-time"), description("Argon 2 time cost.
-        The password will be converted to a 32-byte AES key using argon2, this specifies a custom
-        time cost for that algorithm.
-        If omitted, a default value will be used.")]
-        argon2_time: Option<u32>,
-        #[optional]
-        #[short("l"), long("argon2-lanes"), description("Argon 2 parallel cost.
-        The password will be converted to a 32-byte AES key using argon2, this specifies a custom
-        parallel cost for that algorithm.
-        If omitted, a default value will be used.")]
-        argon2_lanes: Option<u32>,
-    }
-);
+    /// Argon 2 time cost.
+    /// The password will be converted to a 32-byte AES key using argon2, this specifies a custom
+    /// time cost for that algorithm.
+    /// If omitted, a default value will be used.
+    #[cli(short = "t", long = "argon2-time")]
+    argon2_time: Option<u32>,
+    /// Argon 2 parallel cost.
+    /// The password will be converted to a 32-byte AES key using argon2, this specifies a custom
+    /// parallel cost for that algorithm.
+    /// If omitted, a default value will be used.
+    #[cli(short = "l", long = "argon2-lanes")]
+    argon2_lanes: Option<u32>,
+}
 
-arg_parse!(
-    #[name("Initramfs operations")]
-    #[description("Generates initramfs")]
-    struct InitramfsOptions {
-        #[subcommand("gen-cfg")]
-        gen_cfg: Option<InitramfsGenCfgOpts>,
-        #[subcommand("gen-init")]
-        gen_init: Option<InitramfsGenInitOpts>,
-    }
-);
+#[derive(Debug, ArgParse)]
+#[cli(help_path = "initramfs")]
+struct InitramfsOptions {
+    #[cli(subcommand)]
+    subcommand: InitramfsAction
+}
 
-arg_parse!(
-    #[name("Boot options")]
-    #[description("Generate boot options and encrypt a kernel image")]
-    struct BootOpts {
-        #[short("i"), long("kernel-image-path"), description("The kernel image path.
-        Where the kernel image to encrypt is.
-        If compiling locally, is usually `src-dir/arch/<arch>/boot/bzImage`.")]
-        kernel_image_path: String,
+#[derive(Debug, Subcommand)]
+enum InitramfsAction {
+    GenCfg(InitramfsGenCfgOpts),
+    GenInit(InitramfsGenInitOpts)
+}
 
-
-        #[short("e"), long("kernel-enc-path"), description("Encrypted destination.
-        Where to put the encrypted kernel image.")]
-        kernel_enc_path: String,
-
-        #[short("c"), long("cfg-destination"), description("Configuration destination.
-        Where to put the generated configuration file.")]
-        cfg_destination: String,
-
-        #[short("d"), long("efi-device"), description("Efi boot device.
-        The efi label of the boot device.
-        Ex: `HD(1,GPT,f0054eea-adf8-4956-958f-12e353cac4c8,0x800,0x100000)`")]
-        efi_device: String,
+#[derive(Debug, ArgParse)]
+#[cli(help_path = "boot")]
+struct BootOpts {
+    /// The kernel image path.
+    /// Where the kernel image to encrypt is.
+    /// If compiling locally, is usually `src-dir/arch/<arch>/boot/bzImage`.
+    #[cli(short = "i", long = "kernel-image-path")]
+    kernel_image_path: &'static UnixStr,
 
 
-        #[short("p"), long("efi-path"), description("Efi boot device kernel path.
-        The internal path on the EFI device, where you plan to put the kernel.
-        Likely to be the same as `kernel_enc_path`.
-        We're not using microsoft path-specs because we're not in microsoft world just yet.
-        Ex: `/EFI/gentoo/gentoo-6.1.19.enc`")]
-        efi_path: String,
+    /// Encrypted destination.
+    /// Where to put the encrypted kernel image.
+    #[cli(short = "e", long = "kernel-enc-path")]
+    kernel_enc_path: &'static UnixStr,
 
-        #[optional]
-        #[short("m"), long("argon2-mem"), description("Argon 2 mem cost.
-        The password will be converted to a 32-byte AES key using argon2, this specifies a custom
-        mem cost for that algorithm.
-        If omitted, a default value will be used.")]
-        argon2_mem: Option<u32>,
-        #[optional]
-        #[short("t"), long("argon2-time"), description("Argon 2 time cost.
-        The password will be converted to a 32-byte AES key using argon2, this specifies a custom
-        time cost for that algorithm.
-        If omitted, a default value will be used.")]
-        argon2_time: Option<u32>,
-        #[optional]
-        #[short("l"), long("argon2-lanes"), description("Argon 2 parallel cost.
-        The password will be converted to a 32-byte AES key using argon2, this specifies a custom
-        parallel cost for that algorithm.
-        If omitted, a default value will be used.")]
-        argon2_lanes: Option<u32>,
-    }
-);
+    /// Configuration destination.
+    /// Where to put the generated configuration file.
+    #[cli(short = "c", long = "cfg-destination")]
+    cfg_destination: &'static UnixStr,
 
-arg_parse!(
-    #[name("Boot-rs")]
-    #[description("Generate boot config")]
-    struct Opts {
-        #[subcommand("initramfs")]
-        initramfs: Option<InitramfsOptions>,
-        #[subcommand("boot")]
-        boot_opts: Option<BootOpts>,
-    }
-);
+    /// Efi boot device.
+    /// The efi label of the boot device.
+    /// Ex: `HD(1,GPT,f0054eea-adf8-4956-958f-12e353cac4c8,0x800,0x100000)`
+    #[cli(short = "d", long = "efi-device")]
+    efi_device: String,
+
+    /// Efi boot device kernel path.
+    /// The internal path on the EFI device, where you plan to put the kernel.
+    /// Likely to be the same as `kernel_enc_path`.
+    /// We're not using microsoft path-specs because we're not in microsoft world just yet.
+    /// Ex: `/EFI/gentoo/gentoo-6.1.19.enc`
+    #[cli(short = "p", long = "efi-path")]
+    efi_path: &'static UnixStr,
+
+    /// Argon 2 mem cost.
+    /// The password will be converted to a 32-byte AES key using argon2, this specifies a custom
+    /// mem cost for that algorithm.
+    /// If omitted, a default value will be used.
+    #[cli(short = "m", long = "argon2-mem")]
+    argon2_mem: Option<u32>,
+    /// Argon 2 time cost.
+    /// The password will be converted to a 32-byte AES key using argon2, this specifies a custom
+    /// time cost for that algorithm.
+    /// If omitted, a default value will be used.
+    #[cli(short = "t", long = "argon2-time")]
+    argon2_time: Option<u32>,
+    /// Argon 2 parallel cost.
+    /// The password will be converted to a 32-byte AES key using argon2, this specifies a custom
+    /// parallel cost for that algorithm.
+    /// If omitted, a default value will be used.
+    #[cli(short = "l", long = "argon2-lanes")]
+    argon2_lanes: Option<u32>,
+}
+
+/// Generate boot config
+#[derive(Debug, ArgParse)]
+struct Opts {
+    #[cli(subcommand)]
+    subcommand: Action
+}
+
+#[derive(Debug, Subcommand)]
+enum Action {
+    Initramfs(InitramfsOptions),
+    Boot(BootOpts)
+}
 
 fn create_argon2opts_maybe_default(
     argon2_mem: Option<u32>,
@@ -158,55 +167,44 @@ fn create_argon2opts_maybe_default(
 }
 
 pub(crate) fn run() {
-    let mut args = tiny_std::env::args().skip(1);
-    let args = match Opts::parse(&mut args) {
-        Ok(a) => a,
-        Err(e) => {
-            unix_print::unix_eprintln!("{e}");
-            exit(1);
-        }
-    };
-    match (args.initramfs, args.boot_opts) {
-        (Some(initramfs), None) => match (initramfs.gen_cfg, initramfs.gen_init) {
-            (
-                Some(InitramfsGenCfgOpts {
-                    home_uuid,
-                    root_uuid,
-                    swap_uuid,
-                    overwrite,
-                    destination_file,
-                }),
-                None,
-            ) => {
-                gen_cfg(home_uuid, root_uuid, swap_uuid, destination_file, overwrite).unwrap();
-            }
-            (
-                None,
-                Some(InitramfsGenInitOpts {
-                    initramfs_cfg,
-                    destination_directory,
-                    argon2_mem,
-                    argon2_time,
-                    argon2_lanes,
-                }),
-            ) => {
-                let argon2_cfg =
-                    create_argon2opts_maybe_default(argon2_mem, argon2_time, argon2_lanes);
-                if let Err(e) = generate_initramfs(&initramfs_cfg, &argon2_cfg, &destination_directory) {
-                    print_error!("Failed to generate initramfs: {e}");
-                    rusl::process::exit(1);
+    let args = tiny_std::unix::cli::parse_cli_args::<Opts>();
+    match args.subcommand {
+        Action::Initramfs(initramfs) => {
+            match initramfs.subcommand {
+                InitramfsAction::GenCfg(InitramfsGenCfgOpts {
+                                            home_uuid,
+                                            root_uuid,
+                                            swap_uuid,
+                                            overwrite,
+                                            destination_file,
+                                        }) => {
+                    gen_cfg(home_uuid, root_uuid, swap_uuid, destination_file, overwrite).unwrap();
                 }
-                print_ok!("Successfully generated initramfs, don't forget to add initramfs-rs as `./init` to it.");
+                InitramfsAction::GenInit(InitramfsGenInitOpts {
+                                             initramfs_cfg,
+                                             destination_directory,
+                                             argon2_mem,
+                                             argon2_time,
+                                             argon2_lanes,
+                                         }) => {
+                    let argon2_cfg =
+                        create_argon2opts_maybe_default(argon2_mem, argon2_time, argon2_lanes);
+                    if let Err(e) = generate_initramfs(&initramfs_cfg, &argon2_cfg, &destination_directory) {
+                        print_error!("Failed to generate initramfs: {e}");
+                        rusl::process::exit(1);
+                    }
+                    print_ok!("Successfully generated initramfs, don't forget to add initramfs-rs as `./init` to it.");
+                }
             }
-            _ => panic!("Expected either gen_cfg or gen_init"),
-        },
-        (None, Some(boot_opts)) => match generate(&boot_opts) {
-            Ok(_) => {}
-            Err(e) => {
-                panic!("Failed to generate: {e}");
+        }
+        Action::Boot(boot_opts) => {
+            match generate(&boot_opts) {
+                Ok(_) => {}
+                Err(e) => {
+                    panic!("Failed to generate: {e}");
+                }
             }
-        },
-        _ => panic!("Expected either boot or init"),
+        }
     }
 }
 
@@ -218,7 +216,8 @@ fn generate(gen_opts: &BootOpts) -> Result<(), String> {
         )
     })?;
     print_ok!("Read kernel image at {:?}", gen_opts.kernel_image_path);
-    let efi_path = get_efi_path_string(&gen_opts.efi_path)
+    let efi_path = get_efi_path_string(gen_opts.efi_path.as_str()
+        .map_err(|_e| format!("Failed to convert supplied EFI path to a utf8 str"))?)
         .map_err(|e| format!("Failed to convert supplied efi path: {e}"))?;
     let (nonce, salt) =
         generate_nonce_and_salt().map_err(|e| format!("Failed to generate random vectors: {e}"))?;

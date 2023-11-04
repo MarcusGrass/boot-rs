@@ -3,6 +3,8 @@ use alloc::string::{String, ToString};
 use boot_lib::crypt::{Argon2Cfg, Argon2Salt, REQUIRED_HASH_LENGTH};
 use initramfs_lib::{print_ok, read_cfg, write_cfg, Cfg, print_pending};
 use rusl::platform::Mode;
+use rusl::string::unix_str::{UnixStr, UnixString};
+use rusl::unix_lit;
 use tiny_std::fs::OpenOptions;
 use tiny_std::io::{Read, Write};
 use tiny_std::linux::get_pass::get_pass;
@@ -13,11 +15,11 @@ pub(crate) fn gen_cfg(
     home_uuid: String,
     root_uuid: String,
     swap_uuid: String,
-    dest: Option<String>,
+    dest: Option<&'static UnixStr>,
     overwrite: bool,
 ) -> Result<(), String> {
     for disk_uuid in [&home_uuid, &root_uuid, &swap_uuid] {
-        if let Err(e) = tiny_std::fs::metadata(format!("/dev/disk/by-uuid/{disk_uuid}")) {
+        if let Err(e) = tiny_std::fs::metadata(&UnixString::from_format(format_args!("/dev/disk/by-uuid/{disk_uuid}"))) {
             return Err(format!("Failed to read metadata for disk specified by uuid {disk_uuid}, double check that the disk is correct: {e}"));
         }
     }
@@ -32,20 +34,20 @@ pub(crate) fn gen_cfg(
     };
     let dest = if let Some(dest) = dest {
         print_ok!("Using supplied location as destination {dest:?}");
-        dest
+        UnixString::from(dest)
     } else {
         print_ok!("No cfg output destination supplied");
         let config_dir = tiny_std::env::var("XDG_CONFIG_HOME").map_err(|_e| {
             "No cfg output destination supplied, couldn't find `XDG_CONFIG_HOME`".to_string()
         })?;
-        let dest_dir = format!("{config_dir}/boot-rs");
+        let dest_dir = UnixString::from_format(format_args!("{config_dir}/boot-rs"));
 
         if tiny_std::fs::exists(&dest_dir)
-            .map_err(|e| format!("Failed to check if {dest_dir} exists: {e}"))?
+            .map_err(|e| format!("Failed to check if {dest_dir:?} exists: {e}"))?
         {
-            let dest = format!("{dest_dir}/initramfs.cfg");
+            let dest = dest_dir.path_join(unix_lit!("initramfs.cfg"));
             if tiny_std::fs::exists(&dest)
-                .map_err(|e| format!("Failed to check if {dest} exists: {e}"))?
+                .map_err(|e| format!("Failed to check if {dest:?} exists: {e}"))?
                 && !overwrite
             {
                 return Err(format!(
@@ -56,17 +58,17 @@ pub(crate) fn gen_cfg(
         } else {
             tiny_std::fs::create_dir_all(&dest_dir)
                 .map_err(|e| format!("Failed to create destination directory {dest_dir:?}: {e}"))?;
-            format!("{dest_dir}/initramfs.cfg")
+            dest_dir.path_join(unix_lit!("initramfs.cfg"))
         }
     };
     print_ok!("Writing new CFG to {dest:?}");
-    write_cfg(&cfg, dest.as_str())
+    write_cfg(&cfg, &dest)
 }
 
 pub(crate) fn gen_key_file(
-    cfg_file: &str,
+    cfg_file: &UnixStr,
     argon2_cfg: &Argon2Cfg,
-    dest: &str,
+    dest: &UnixStr,
 ) -> Result<(), String> {
     let mut initramfs_cfg = cfg_from_path(cfg_file)?;
     if initramfs_cfg.pass_salt.is_some() {
@@ -102,22 +104,16 @@ pub(crate) fn gen_key_file(
     Ok(())
 }
 
-fn test_cryptsetup_open(key_file: &str, disk_uuid: &str) -> Result<(), String> {
-    let path = format!("/dev/disk/by-uuid/{disk_uuid}\0");
-    let mut child = tiny_std::process::Command::new("/sbin/cryptsetup\0")
+fn test_cryptsetup_open(key_file: &UnixStr, disk_uuid: &str) -> Result<(), String> {
+    let path = UnixString::from_format(format_args!("/dev/disk/by-uuid/{disk_uuid}\0"));
+    let mut child = tiny_std::process::Command::new(unix_lit!("/sbin/cryptsetup"))
         .map_err(|e| format!("Failed to construct command: {e}"))?
-        .arg("luksOpen\0")
-        .map_err(|e| format!("Failed to add argument: {e}"))?
-        .arg("--key-file\0")
-        .map_err(|e| format!("Failed to add argument: {e}"))?
+        .arg(unix_lit!("luksOpen"))
+        .arg(unix_lit!("--key-file"))
         .arg(key_file)
-        .map_err(|e| format!("Failed to add argument: {e}"))?
-        .arg("--test-passphrase\0")
-        .map_err(|e| format!("Failed to add argument: {e}"))?
-        .arg("-v\0")
-        .map_err(|e| format!("Failed to add argument: {e}"))?
-        .arg(path)
-        .map_err(|e| format!("Failed to add argument: {e}"))?
+        .arg(unix_lit!("--test-passphrase"))
+        .arg(unix_lit!("-v"))
+        .arg(&path)
         .spawn()
         .map_err(|e| format!("Failed to spawn cryptsetup: {e}"))?;
     let res = child.wait()
@@ -130,9 +126,9 @@ fn test_cryptsetup_open(key_file: &str, disk_uuid: &str) -> Result<(), String> {
 
 
 pub(crate) fn regen_key_file(
-    cfg_file: &str,
+    cfg_file: &UnixStr,
     argon2opts: &Argon2Cfg,
-    dest: &str,
+    dest: &UnixStr,
 ) -> Result<(), String> {
     let initramfs_cfg = cfg_from_path(cfg_file)?;
     let Some(salt) = initramfs_cfg.pass_salt else {
@@ -148,7 +144,7 @@ pub(crate) fn regen_key_file(
     let pwd = get_pass(&mut pass_bytes)
         .map_err(|e| format!("Failed to get password to test disk decryption {e}"))?;
     let pwd = pwd.trim_end_matches('\n');
-    let argon2_cfg = argon2opts.clone();
+    let argon2_cfg = argon2opts;
     let key = boot_lib::crypt::derive_key(pwd.as_bytes(), &Argon2Salt(salt_bytes), argon2_cfg)
         .map_err(|e| format!("Failed to derive a key with salt {e}"))?;
     OpenOptions::new()
@@ -168,67 +164,69 @@ pub(crate) fn regen_key_file(
     Ok(())
 }
 
-fn cfg_from_path(path: &str) -> Result<Cfg, String> {
+fn cfg_from_path(path: &UnixStr) -> Result<Cfg, String> {
     let cfg =
         read_cfg(path).map_err(|e| format!("Failed to read initramfs cfg from disk {e:?}"))?;
     Ok(cfg)
 }
 
 pub(crate) fn generate_initramfs(
-    cfg_file: &str,
+    cfg_file: &UnixStr,
     argon2opts: &Argon2Cfg,
-    dest: &str,
+    dest: &UnixStr,
 ) -> Result<(), String> {
     let cfg = cfg_from_path(cfg_file)
         .map_err(|e| format!("Failed to read configuration at {cfg_file:?}: {e}"))?;
-    if tiny_std::fs::exists(dest).map_err(|e| format!("Failed to check if {dest} exists: {e}"))? {
+    if tiny_std::fs::exists(dest).map_err(|e| format!("Failed to check if {dest:?} exists: {e}"))? {
         return Err(format!(
             "Directory already exists at initramfs destination {dest:?}"
         ));
     }
     create_751_dir(dest)?;
-    for dir in ["bin", "dev", "lib64", "mnt", "proc", "run", "sbin", "sys"] {
-        let path = format!("{dest}/{dir}");
+    for dir in [unix_lit!("bin"), unix_lit!("dev"), unix_lit!("lib64"), unix_lit!("mnt"), unix_lit!("proc"), unix_lit!("run"), unix_lit!("sbin"), unix_lit!("sys")] {
+        let path = dest.path_join(dir);
         create_751_dir(&path)?;
     }
 
-    create_751_dir(&format!("{dest}/mnt/root"))?;
+    let mnt_root_dest = dest.path_join(unix_lit!("/mnt/root"));
+    create_751_dir(&mnt_root_dest)?;
+
     let copy_from_fs = [
-        ("/bin/busybox", format!("{dest}/bin/busybox")),
-        ("/sbin/cryptsetup", format!("{dest}/sbin/cryptsetup")),
-        ("/sbin/e2fsck.static", format!("{dest}/sbin/e2fsck")),
+        (unix_lit!("/bin/busybox"), dest.path_join(unix_lit!("/bin/busybox"))),
+        (unix_lit!("/sbin/cryptsetup"), dest.path_join(unix_lit!("/sbin/cryptsetup"))),
+        (unix_lit!("/sbin/e2fsck.static"), dest.path_join(unix_lit!("/sbin/e2fsck"))),
     ];
     for (src, dest) in copy_from_fs {
         static_check_copy(src, &dest)?;
     }
-    shell_out_copy_archive_dev(dest)?;
+    shell_out_copy_archive_dev(dest.as_str().unwrap())?;
     if cfg.pass_salt.is_some() {
-        regen_key_file(cfg_file, argon2opts, &format!("{dest}/crypt.key"))
+        regen_key_file(cfg_file, argon2opts, &dest.path_join(unix_lit!("crypt.key")))
     } else {
-        gen_key_file(cfg_file, argon2opts, &format!("{dest}/crypt.key"))
+        gen_key_file(cfg_file, argon2opts, &dest.path_join(unix_lit!("crypt.key")))
     }
     .map_err(|e| format!("Failed to create key {e}"))?;
-    let cfg_path_utf8 = format!("{dest}/initramfs.cfg");
+
+    let cfg_path_utf8 = dest.path_join(unix_lit!("initramfs.cfg"));
     write_cfg(&cfg, &cfg_path_utf8).map_err(|e| format!("Failed to write initramfs.cfg to {e}"))?;
     Ok(())
 }
 
-fn create_751_dir(dir: &str) -> Result<(), String> {
+fn create_751_dir(dir: &UnixStr) -> Result<(), String> {
     tiny_std::fs::create_dir_mode(dir, Mode::from(0o751))
         .map_err(|e| format!("Failed to create 751 mode directory {dir:?} for initramfs {e}"))
 }
 
-fn static_check_copy(src: &str, dest: &str) -> Result<(), String> {
-    if !tiny_std::fs::exists(src).map_err(|e| format!("Failed to check if {src} exists: {e}"))? {
+fn static_check_copy(src: &UnixStr, dest: &UnixStr) -> Result<(), String> {
+    if !tiny_std::fs::exists(src).map_err(|e| format!("Failed to check if {src:?} exists: {e}"))? {
         return Err(format!(
             "Tried to copy {src:?} to {dest:?} but {src:?} does not exist"
         ));
     }
-    let mut file_out = tiny_std::process::Command::new("/usr/bin/file")
+    let mut file_out = tiny_std::process::Command::new(unix_lit!("/usr/bin/file"))
         .unwrap()
         .stdout(Stdio::MakePipe)
         .arg(src)
-        .unwrap()
         .spawn()
         .map_err(|e| {
             format!("Failed to spawn `file` command on {src:?} to check if statically linked {e}")
@@ -264,14 +262,11 @@ fn static_check_copy(src: &str, dest: &str) -> Result<(), String> {
 
 fn shell_out_copy_archive_dev(dest_base: &str) -> Result<(), String> {
     for dir in ["null", "console", "tty"] {
-        let mut output = tiny_std::process::Command::new("/bin/cp")
+        let mut output = tiny_std::process::Command::new(unix_lit!("/bin/cp"))
             .unwrap()
-            .arg("--archive")
-            .unwrap()
-            .arg(format!("/dev/{dir}"))
-            .unwrap()
-            .arg(format!("{dest_base}/dev"))
-            .unwrap()
+            .arg(unix_lit!("--archive"))
+            .arg(&UnixString::from_format(format_args!("/dev/{dir}\0")))
+            .arg(&UnixString::from_format(format_args!("{dest_base}/dev\0")))
             .spawn()
             .map_err(|e| format!("Failed to spawn copy command `cp --archive /dev/{dir} {dest_base:?}/dev` : {e}"))?;
         let status = output.wait().unwrap();
