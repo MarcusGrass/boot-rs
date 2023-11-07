@@ -8,4 +8,3 @@ edition = "2021"
 [dependencies]
 rusl = { workspace = true, features = ["alloc"] }
 tiny-std = { workspace = true, default-features = false, features = ["alloc"] }
-unix-print = { workspace = true }

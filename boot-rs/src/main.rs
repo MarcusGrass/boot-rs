@@ -215,7 +215,10 @@ fn get_pass(system_table: &mut SystemTable<Boot>) -> Result<String, String> {
     loop {
         // Safety:
         // Safe if event is not reused after close (we only oneshot it).
-        let key_ready_evt = unsafe { system_table.stdin().wait_for_key_event().unsafe_clone() };
+
+        let Some(key_ready_evt) = system_table.stdin().wait_for_key_event() else {
+            continue;
+        };
         system_table.boot_services().wait_for_event(&mut [key_ready_evt])
             .map_err(|e| format!("ERROR: Failed to wait for key event when listening to kernel decryption key: {e:?}"))?;
         let key = system_table

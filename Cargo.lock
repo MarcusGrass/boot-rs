@@ -25,9 +25,9 @@ dependencies = [
 
 [[package]]
 name = "aes-gcm"
-version = "0.10.2"
+version = "0.10.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "209b47e8954a928e1d72e86eca7000ebb6655fe1436d33eefc2201cad027e237"
+checksum = "831010a0f742e1209b3bcea8fab6a8e149051ba6099432c8cb2cc117dec3ead1"
 dependencies = [
  "aead",
  "aes",
@@ -39,9 +39,9 @@ dependencies = [
 
 [[package]]
 name = "argon2"
-version = "0.5.1"
+version = "0.5.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b2e554a8638bdc1e4eae9984845306cc95f8a9208ba8d49c3859fd958b46774d"
+checksum = "17ba4cac0a46bc1d2912652a751c47f2a9f3a7fe89bcae2275d418f5270402f9"
 dependencies = [
  "base64ct",
  "blake2",
@@ -112,7 +112,6 @@ dependencies = [
  "rusl",
  "tiny-cli",
  "tiny-std",
- "unix-print",
 ]
 
 [[package]]
@@ -202,7 +201,6 @@ version = "0.1.0"
 dependencies = [
  "rusl",
  "tiny-std",
- "unix-print",
 ]
 
 [[package]]
@@ -212,7 +210,6 @@ dependencies = [
  "initramfs-lib",
  "rusl",
  "tiny-std",
- "unix-print",
 ]
 
 [[package]]
@@ -320,9 +317,9 @@ checksum = "ec0be4795e2f6a28069bec0b5ff3e2ac9bafc99e6a9a7dc3547996c5c816922c"
 
 [[package]]
 name = "rusl"
-version = "0.1.0"
+version = "0.2.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d1032884db15e48ffa3ebdc669457699fdfbf750aa90000b29e302e9f8d14a09"
+checksum = "ff80bed3a5dccec32fbf934a1438d4b2e022ec02a8fcfcc2c7e4b309a19c5b55"
 dependencies = [
  "linux-rust-bindings",
  "sc",
@@ -364,19 +361,28 @@ dependencies = [
 
 [[package]]
 name = "tiny-cli"
-version = "0.1.0"
+version = "0.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "964953c31a5c985963bc3e623994c02c66a1920fa4e633a945959413e57f4c4d"
+checksum = "8d477940dd9c5cb928ebe4d072b54078e69437c4c89f9023bdec0079949d05e5"
+
+[[package]]
+name = "tiny-start"
+version = "0.1.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "058c9b34cb750e004035ea4211677981c9f00cc6e8d06614e58d9b66028702bc"
+dependencies = [
+ "rusl",
+]
 
 [[package]]
 name = "tiny-std"
-version = "0.1.0"
+version = "0.2.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2fade72caa88ce1d32651ff6d92288672a329bf0614435b251f98fc4858476d2"
+checksum = "fe884fd50280afc0a39cfbf109df877a8610fab4cefd5e51fb890452537f73d8"
 dependencies = [
  "rusl",
  "sc",
- "unix-print",
+ "tiny-start",
 ]
 
 [[package]]
@@ -396,9 +402,9 @@ dependencies = [
 
 [[package]]
 name = "uefi"
-version = "0.24.0"
+version = "0.25.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3b63e82686b4bdb0db74f18b2abbd60a0470354fb640aa69e115598d714d0a10"
+checksum = "1cb8f384905087f56c2fdf90bb7d94d24c600775b9f40424a4b80882ba399d47"
 dependencies = [
  "bitflags",
  "log",
@@ -422,9 +428,9 @@ dependencies = [
 
 [[package]]
 name = "uefi-raw"
-version = "0.3.0"
+version = "0.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "62642516099c6441a5f41b0da8486d5fc3515a0603b0fdaea67b31600e22082e"
+checksum = "8bbf45ee102da89ef37674dd5186cd766418338457e660e7a3a1bad64d122abf"
 dependencies = [
  "bitflags",
  "ptr_meta",
@@ -433,9 +439,9 @@ dependencies = [
 
 [[package]]
 name = "uefi-services"
-version = "0.21.0"
+version = "0.22.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "44b32954ebbb4be5ebfde0df6699c2091f04e9f9c3762c65f3435dfb1a90a668"
+checksum = "f23d40df0511a2de5cadd20c9fcb2f998ac82f0c0da8a9b2817c8e8a4f0fd6fb"
 dependencies = [
  "cfg-if",
  "log",
@@ -444,9 +450,9 @@ dependencies = [
 
 [[package]]
 name = "uguid"
-version = "2.0.1"
+version = "2.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "16dfbd255defbd727b3a30e8950695d2e6d045841ee250ff0f1f7ced17917f8d"
+checksum = "1ef516f0806c5f61da6aa95125d0eb2d91cc95b2df426c06bde8be657282aee5"
 
 [[package]]
 name = "unicode-ident"
@@ -462,15 +468,6 @@ checksum = "fc1de2c688dc15305988b563c3854064043356019f97a4b46276fe734c4f07ea"
 dependencies = [
  "crypto-common",
  "subtle",
-]
-
-[[package]]
-name = "unix-print"
-version = "0.1.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c50e1866b3de196f1329f6a805771eee750651c83bbebd5dff159e5f033cc16f"
-dependencies = [
- "sc",
 ]
 
 [[package]]

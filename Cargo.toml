@@ -6,12 +6,11 @@ members = ["boot-lib", "boot-rs", "boot-strap", "initramfs-lib", "initramfs-rs"]
 boot-lib = { path = "boot-lib" }
 initramfs-lib = { path = "initramfs-lib" }
 
-aes-gcm = { version = "0.10.2", default-features = false, features = ["alloc", "aes"] }
-argon2 = { version = "0.5.1", default-features = false, features = ["alloc"] }
+aes-gcm = { version = "0.10.3", default-features = false, features = ["alloc", "aes"] }
+argon2 = { version = "0.5.2", default-features = false, features = ["alloc"] }
 hex = { version = "0.4.3", default-features = false }
-rusl = { version = "0.1.0", default-features = false}
-tiny-cli = { version = "0.1.0" }
-tiny-std = { version = "0.1.0", default-features = false }
-uefi = { version = "0.24.0", features = ["alloc"] }
-uefi-services = "0.21.0"
-unix-print = "0.1.0"
+rusl = { version = "0.2.2", default-features = false}
+tiny-cli = { version = "0.2.0" }
+tiny-std = { version = "0.2.3", default-features = false }
+uefi = { version = "0.25.0", features = ["alloc"] }
+uefi-services = "0.22.0"
