@@ -11,12 +11,13 @@ use rusl::string::unix_str::UnixStr;
 use initramfs_lib::{print_error, print_ok};
 use tiny_cli::{ArgParse, Subcommand};
 use tiny_std::linux::get_pass::get_pass;
+use tiny_std::println;
 use tiny_std::time::SystemTime;
 use tiny_std::unix::random::system_random;
 
 /// Generate initramfs configuration
 #[derive(Debug, ArgParse)]
-#[cli(help_path = "gen-cfg")]
+#[cli(help_path = "boot-rs, initramfs, gen-cfg")]
 struct InitramfsGenCfgOpts {
     /// UUID for the home partition
     #[cli(short = "h", long = "home-uuid")]
@@ -37,7 +38,7 @@ struct InitramfsGenCfgOpts {
     destination_file: Option<&'static UnixStr>,
 }
 #[derive(Debug, ArgParse)]
-#[cli(help_path = "gen-init")]
+#[cli(help_path = "boot-rs, initramfs, gen-init")]
 struct InitramfsGenInitOpts {
     /// Configuration file containing uuids of cryptdevices
     #[cli(short = "i", long = "initramfs-cfg")]
@@ -69,7 +70,7 @@ struct InitramfsGenInitOpts {
 }
 
 #[derive(Debug, ArgParse)]
-#[cli(help_path = "initramfs")]
+#[cli(help_path = "boot-rs, initramfs")]
 struct InitramfsOptions {
     #[cli(subcommand)]
     subcommand: InitramfsAction
@@ -81,8 +82,9 @@ enum InitramfsAction {
     GenInit(InitramfsGenInitOpts)
 }
 
+/// Encrypt kernel image
 #[derive(Debug, ArgParse)]
-#[cli(help_path = "boot")]
+#[cli(help_path = "boot-rs, boot")]
 struct BootOpts {
     /// The kernel image path.
     /// Where the kernel image to encrypt is.
@@ -137,6 +139,7 @@ struct BootOpts {
 
 /// Generate boot config
 #[derive(Debug, ArgParse)]
+#[cli(help_path = "boot-rs")]
 struct Opts {
     #[cli(subcommand)]
     subcommand: Action
@@ -228,14 +231,14 @@ fn generate(gen_opts: &BootOpts) -> Result<(), String> {
         gen_opts.argon2_lanes,
     );
     let metadata = EncryptionMetadata::new(nonce, salt, argon2_cfg);
-    unix_print::unix_println!("[boot-rs]: Deriving encryption key.");
+    println!("[boot-rs]: Deriving encryption key.");
     let (key, derive_key_time) =
         timed(|| derive_key(pass.as_bytes(), metadata.salt(), metadata.argon2_cfg()))?;
     let key = key.map_err(|e| format!("Failed to derive a key from the password: {e}"))?;
-    unix_print::unix_println!("[boot-rs]: Derived encryption key in {derive_key_time} seconds.");
-    unix_print::unix_println!("[boot-rs]: Encrypting kernel image.");
+    println!("[boot-rs]: Derived encryption key in {derive_key_time} seconds.");
+    println!("[boot-rs]: Encrypting kernel image.");
     let (encrypted, encrypt_time) = timed(|| encrypt(&kernel_data, &key, &metadata))?;
-    unix_print::unix_println!("[boot-rs]: Encrypted kernel image in {encrypt_time} seconds.");
+    println!("[boot-rs]: Encrypted kernel image in {encrypt_time} seconds.");
     // Insanity check.
     let encrypted = encrypted?;
     if encrypted == kernel_data {
@@ -244,7 +247,7 @@ fn generate(gen_opts: &BootOpts) -> Result<(), String> {
                 .to_string(),
         );
     }
-    unix_print::unix_println!("[boot-rs]: Starting a test decryption.");
+    println!("[boot-rs]: Starting a test decryption.");
     let (decrypted, decryption_time) = timed(|| {
         match hash_and_decrypt(&encrypted, pass.as_bytes()) {
             Ok(dec) => Ok(dec),
@@ -264,7 +267,7 @@ fn generate(gen_opts: &BootOpts) -> Result<(), String> {
     if decrypted != kernel_data.as_slice() {
         return Err("Failed to decrypt kernel image, input is not the same as output".to_string());
     }
-    unix_print::unix_println!(
+    println!(
         "[boot-rs]: Successfully ran test-decryption in {decryption_time} seconds"
     );
     let cfg = BootCfg {
@@ -272,7 +275,7 @@ fn generate(gen_opts: &BootOpts) -> Result<(), String> {
         encrypted_path_on_device: &efi_path,
     };
     let cfg_out = cfg.serialize();
-    unix_print::unix_println!(
+    println!(
         "[boot-rs]: Writing encrypted kernel to {:?}",
         gen_opts.kernel_enc_path
     );
@@ -282,7 +285,7 @@ fn generate(gen_opts: &BootOpts) -> Result<(), String> {
             gen_opts.kernel_enc_path
         )
     })?;
-    unix_print::unix_println!(
+    println!(
         "[boot-rs]: Writing configuration to {:?}",
         gen_opts.cfg_destination
     );
@@ -292,7 +295,7 @@ fn generate(gen_opts: &BootOpts) -> Result<(), String> {
             gen_opts.cfg_destination
         )
     })?;
-    unix_print::unix_println!("[boot-rs]: Success!");
+    println!("[boot-rs]: Success!");
     Ok(())
 }
 
@@ -310,11 +313,11 @@ fn generate_nonce_and_salt(
 #[inline]
 fn prompt_passwords() -> Result<String, String> {
     let mut pass_bytes = [0u8; 128];
-    unix_print::unix_println!("Enter kernel decryption password: ");
+    println!("Enter kernel decryption password: ");
     let pass = get_pass(&mut pass_bytes)
         .map_err(|e| format!("Failed to get the decryption password from stdin: {e}"))?;
     let mut pass2_bytes = [0u8; 128];
-    unix_print::unix_println!("Repeat kernel decryption password: ");
+    println!("Repeat kernel decryption password: ");
     let pass2 = get_pass(&mut pass2_bytes)
         .map_err(|e| format!("Failed to get decryption password repetition from stdin: {e}"))?;
     if pass2 != pass {
@@ -344,6 +347,6 @@ fn get_efi_path_string(input_path: &str) -> Result<String, String> {
     if path.len() > orig_len {
         path = path.trim_end_matches('\\').to_string();
     }
-    unix_print::unix_println!("Using efi path {path}");
+    println!("Using efi path {path}");
     Ok(path)
 }

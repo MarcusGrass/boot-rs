@@ -9,4 +9,3 @@ edition = "2021"
 initramfs-lib = { workspace = true }
 rusl = { workspace = true, features = ["alloc"] }
 tiny-std = { workspace = true, features = ["alloc", "executable", "global-allocator"]}
-unix-print = { workspace = true }

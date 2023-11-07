@@ -29,13 +29,13 @@ macro_rules! format_colored {
 #[macro_export]
 macro_rules! print_ok {
     ($fmt:expr) => {
-        unix_print::unix_println!("{}{}",
+        tiny_std::println!("{}{}",
             $crate::format_colored!($crate::print::Color::Green, "[initramfs-lib]: "),
             format_args!($fmt)
         )
     };
     ($fmt:expr, $($args:tt)*) => {
-        unix_print::unix_println!("{}{}",
+        tiny_std::println!("{}{}",
             $crate::format_colored!($crate::print::Color::Green, "[initramfs-lib]: "),
             format_args!($fmt, $($args)*)
         )
@@ -45,13 +45,13 @@ macro_rules! print_ok {
 #[macro_export]
 macro_rules! print_pending {
     ($fmt:expr) => {
-        unix_print::unix_println!("{}{}",
+        tiny_std::println!("{}{}",
             $crate::format_colored!($crate::print::Color::Yellow, "[initramfs-lib]: "),
             format_args!($fmt)
         )
     };
     ($fmt:expr, $($args:tt)*) => {
-        unix_print::unix_println!("{}{}",
+        tiny_std::println!("{}{}",
             $crate::format_colored!($crate::print::Color::Yellow, "[initramfs-lib]: "),
             format_args!($fmt, $($args)*)
         )
@@ -61,13 +61,13 @@ macro_rules! print_pending {
 #[macro_export]
 macro_rules! print_error {
     ($fmt:expr) => {
-        unix_print::unix_println!("{}{}",
+        tiny_std::println!("{}{}",
             $crate::format_colored!($crate::print::Color::Red, "[initramfs-lib]: "),
             format_args!($fmt)
         )
     };
     ($fmt:expr, $($args:tt)*) => {
-        unix_print::unix_println!("{}{}",
+        tiny_std::println!("{}{}",
             $crate::format_colored!($crate::print::Color::Red, "[initramfs-lib]: "),
             format_args!($fmt, $($args)*)
         )
@@ -76,13 +76,13 @@ macro_rules! print_error {
 
 #[cfg(test)]
 mod tests {
+    use tiny_std::println;
     use crate::print::Color;
-    use unix_print::unix_println;
 
     #[test]
     fn test_print() {
-        unix_println!("{}", format_colored!(Color::Green, "Hello"));
-        unix_println!(
+        println!("{}", format_colored!(Color::Green, "Hello"));
+        println!(
             "{}",
             format_colored!(Color::Red, "My fmt {}", "other thing")
         );

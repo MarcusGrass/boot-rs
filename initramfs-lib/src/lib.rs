@@ -7,10 +7,10 @@ use rusl::error::Errno;
 use rusl::platform::{FilesystemType, Mountflags};
 use rusl::string::unix_str::{UnixStr, UnixString};
 use rusl::unistd::{mount, swapon, unmount};
+use tiny_std::eprintln;
 use tiny_std::io::{Read, Write};
 use tiny_std::linux::get_pass::get_pass;
 use tiny_std::process::{Command, Stdio};
-use unix_print::unix_eprintln;
 
 mod error;
 pub mod print;
@@ -365,10 +365,10 @@ const ABS_SYS: &UnixStr = UnixStr::from_str_checked("/sys\0");
 // This can fail without it necessarily being a problem
 pub fn try_unmount() -> Result<()> {
     if let Err(e) = unmount(ABS_PROC) {
-        unix_eprintln!("Failed to unmount proc fs: {e}");
+        eprintln!("Failed to unmount proc fs: {e}");
     }
     if let Err(e) = unmount(ABS_SYS) {
-        unix_eprintln!("Failed to unmount sysfs {e}");
+        eprintln!("Failed to unmount sysfs {e}");
     }
     // Don't try to unmount /dev, we're using it
     Ok(())
@@ -390,7 +390,7 @@ pub fn switch_root() -> Error {
 
 pub fn bail_to_shell() -> Error {
     const SH: &UnixStr = UnixStr::from_str_checked("sh\0");
-    unix_eprintln!("Bailing to shell, good luck.");
+    eprintln!("Bailing to shell, good luck.");
     let mut cmd = match Command::new(BIN_BUSYBOX) {
         Ok(cmd) => cmd,
         Err(e) => {
@@ -487,6 +487,7 @@ pub fn write_cfg(cfg: &Cfg, path: &UnixStr) -> core::result::Result<(), String> 
 
 #[cfg(test)]
 mod tests {
+    use tiny_std::println;
     use super::*;
 
     // Needs your testing machine's disk uuids
@@ -495,6 +496,6 @@ mod tests {
     fn test_blkid() {
         let cfg = read_cfg(UnixStr::from_str_checked("/home/gramar/code/rust/yubi-initramfs/initramfs.cfg\0")).unwrap();
         let parts = get_partitions(&cfg).unwrap();
-        unix_eprintln!("{parts:?}");
+        println!("{parts:?}");
     }
 }

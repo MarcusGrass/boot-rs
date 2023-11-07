@@ -12,4 +12,3 @@ initramfs-lib = { workspace = true }
 tiny-cli = { workspace = true }
 tiny-std = { workspace = true, features = ["alloc", "executable", "global-allocator", "cli"]}
 rusl = { workspace = true, features = ["alloc"]}
-unix-print = { workspace = true }
