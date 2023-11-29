@@ -1,7 +1,7 @@
 use alloc::format;
 use alloc::string::{String, ToString};
 use boot_lib::crypt::{Argon2Cfg, Argon2Salt, REQUIRED_HASH_LENGTH};
-use initramfs_lib::{print_ok, read_cfg, write_cfg, Cfg, print_pending};
+use initramfs_lib::{print_ok, print_pending, read_cfg, write_cfg, Cfg};
 use rusl::platform::Mode;
 use rusl::string::unix_str::{UnixStr, UnixString};
 use rusl::unix_lit;
@@ -19,7 +19,9 @@ pub(crate) fn gen_cfg(
     overwrite: bool,
 ) -> Result<(), String> {
     for disk_uuid in [&home_uuid, &root_uuid, &swap_uuid] {
-        if let Err(e) = tiny_std::fs::metadata(&UnixString::from_format(format_args!("/dev/disk/by-uuid/{disk_uuid}"))) {
+        if let Err(e) = tiny_std::fs::metadata(&UnixString::from_format(format_args!(
+            "/dev/disk/by-uuid/{disk_uuid}"
+        ))) {
             return Err(format!("Failed to read metadata for disk specified by uuid {disk_uuid}, double check that the disk is correct: {e}"));
         }
     }
@@ -90,15 +92,22 @@ pub(crate) fn gen_key_file(
         .map_err(|e| format!("Failed to write config with new salt {e}"))?;
     OpenOptions::new()
         .create_new(true)
+        .read(true)
+        .write(true)
         .mode(Mode::S_IRUSR)
         .open(dest)
         .map_err(|e| format!("Failed to create new file at {dest:?}: {e}"))?
         .write_all(&key.0)
         .map_err(|e| format!("Failed to write regenerated key to destination {dest:?}: {e}"))?;
-    for disk in [&initramfs_cfg.root_uuid, &initramfs_cfg.home_uuid, &initramfs_cfg.swap_uuid] {
+    for disk in [
+        &initramfs_cfg.root_uuid,
+        &initramfs_cfg.home_uuid,
+        &initramfs_cfg.swap_uuid,
+    ] {
         print_pending!("Testing cryptokey for disk: {disk}");
-        test_cryptsetup_open(dest, disk)
-            .map_err(|e| format!("Failed to verify supplied passphrase works with provided disks: {e}"))?;
+        test_cryptsetup_open(dest, disk).map_err(|e| {
+            format!("Failed to verify supplied passphrase works with provided disks: {e}")
+        })?;
     }
     print_ok!("Successfully verified cryptokeys");
     Ok(())
@@ -116,14 +125,16 @@ fn test_cryptsetup_open(key_file: &UnixStr, disk_uuid: &str) -> Result<(), Strin
         .arg(&path)
         .spawn()
         .map_err(|e| format!("Failed to spawn cryptsetup: {e}"))?;
-    let res = child.wait()
+    let res = child
+        .wait()
         .map_err(|e| format!("Failed to await child: {e}"))?;
     if res != 0 {
-        return Err(format!("Failed to test opening disks with supplied passphrase, got cryptsetup exit code {res}"));
+        return Err(format!(
+            "Failed to test opening disks with supplied passphrase, got cryptsetup exit code {res}"
+        ));
     }
     Ok(())
 }
-
 
 pub(crate) fn regen_key_file(
     cfg_file: &UnixStr,
@@ -132,8 +143,11 @@ pub(crate) fn regen_key_file(
 ) -> Result<(), String> {
     let initramfs_cfg = cfg_from_path(cfg_file)?;
     let Some(salt) = initramfs_cfg.pass_salt else {
-        return Err("The provided cfg already no provided salt, implying that no key has been generated.\n\
-        If you want to generate a new key, use `generate-key`".to_string())
+        return Err(
+            "The provided cfg already no provided salt, implying that no key has been generated.\n\
+        If you want to generate a new key, use `generate-key`"
+                .to_string(),
+        );
     };
     let salt_bytes: [u8; REQUIRED_HASH_LENGTH] = hex::decode(salt)
         .map_err(|e| format!("Failed to decode salt hex {e}"))?
@@ -155,10 +169,15 @@ pub(crate) fn regen_key_file(
         .map_err(|e| format!("Failed to create new file at {dest:?}: {e}"))?
         .write_all(&key.0)
         .map_err(|e| format!("Failed to write regenerated key to destination {dest:?}: {e}"))?;
-    for disk in [&initramfs_cfg.root_uuid, &initramfs_cfg.home_uuid, &initramfs_cfg.swap_uuid] {
+    for disk in [
+        &initramfs_cfg.root_uuid,
+        &initramfs_cfg.home_uuid,
+        &initramfs_cfg.swap_uuid,
+    ] {
         print_pending!("Testing cryptokey for disk: {disk}");
-        test_cryptsetup_open(dest, disk)
-            .map_err(|e| format!("Failed to verify supplied passphrase works with provided disks: {e}"))?;
+        test_cryptsetup_open(dest, disk).map_err(|e| {
+            format!("Failed to verify supplied passphrase works with provided disks: {e}")
+        })?;
     }
     print_ok!("Successfully verified cryptokeys");
     Ok(())
@@ -183,7 +202,16 @@ pub(crate) fn generate_initramfs(
         ));
     }
     create_751_dir(dest)?;
-    for dir in [unix_lit!("bin"), unix_lit!("dev"), unix_lit!("lib64"), unix_lit!("mnt"), unix_lit!("proc"), unix_lit!("run"), unix_lit!("sbin"), unix_lit!("sys")] {
+    for dir in [
+        unix_lit!("bin"),
+        unix_lit!("dev"),
+        unix_lit!("lib64"),
+        unix_lit!("mnt"),
+        unix_lit!("proc"),
+        unix_lit!("run"),
+        unix_lit!("sbin"),
+        unix_lit!("sys"),
+    ] {
         let path = dest.path_join(dir);
         create_751_dir(&path)?;
     }
@@ -192,18 +220,31 @@ pub(crate) fn generate_initramfs(
     create_751_dir(&mnt_root_dest)?;
 
     let copy_from_fs = [
-        (unix_lit!("/bin/busybox"), dest.path_join(unix_lit!("/bin/busybox"))),
-        (unix_lit!("/sbin/cryptsetup"), dest.path_join(unix_lit!("/sbin/cryptsetup"))),
-        (unix_lit!("/sbin/e2fsck.static"), dest.path_join(unix_lit!("/sbin/e2fsck"))),
+        (
+            unix_lit!("/bin/busybox"),
+            dest.path_join(unix_lit!("/bin/busybox")),
+        ),
+        (
+            unix_lit!("/sbin/cryptsetup"),
+            dest.path_join(unix_lit!("/sbin/cryptsetup")),
+        ),
     ];
     for (src, dest) in copy_from_fs {
         static_check_copy(src, &dest)?;
     }
     shell_out_copy_archive_dev(dest.as_str().unwrap())?;
     if cfg.pass_salt.is_some() {
-        regen_key_file(cfg_file, argon2opts, &dest.path_join(unix_lit!("crypt.key")))
+        regen_key_file(
+            cfg_file,
+            argon2opts,
+            &dest.path_join(unix_lit!("crypt.key")),
+        )
     } else {
-        gen_key_file(cfg_file, argon2opts, &dest.path_join(unix_lit!("crypt.key")))
+        gen_key_file(
+            cfg_file,
+            argon2opts,
+            &dest.path_join(unix_lit!("crypt.key")),
+        )
     }
     .map_err(|e| format!("Failed to create key {e}"))?;
 

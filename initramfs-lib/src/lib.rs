@@ -6,11 +6,12 @@ use alloc::{format, vec};
 use rusl::error::Errno;
 use rusl::platform::{FilesystemType, Mountflags};
 use rusl::string::unix_str::{UnixStr, UnixString};
-use rusl::unistd::{mount, swapon, unmount};
+use rusl::unistd::{mount, unmount};
+use rusl::unix_lit;
 use tiny_std::eprintln;
 use tiny_std::io::{Read, Write};
 use tiny_std::linux::get_pass::get_pass;
-use tiny_std::process::{Command, Stdio};
+use tiny_std::process::{Child, Command, Stdio};
 
 mod error;
 pub mod print;
@@ -23,8 +24,8 @@ pub fn full_init(cfg: &Cfg) -> Result<()> {
         .map_err(|e| Error::App(format!("Failed to mount pseudo filesystems {e:?}")))?;
     print_ok!("Running mdev.");
     run_mdev().map_err(|e| Error::App(format!("Failed to run mdev oneshot: {e:?}")))?;
-    print_ok!("Mounting user filesystems.");
-    mount_user_filesystems(cfg)
+    print_ok!("Preparing user filesystems.");
+    prep_user_filesystems(cfg)
         .map_err(|e| Error::App(format!("Failed to mount user filesystems {e:?}")))?;
     print_ok!("Cleaning up.");
     try_unmount().map_err(|e| Error::App(format!("Failed to unmount pseudo filesystems {e:?}")))?;
@@ -66,24 +67,6 @@ pub fn mount_pseudo_filesystems() -> Result<()> {
     Ok(())
 }
 
-const E2FSCK: &UnixStr = UnixStr::from_str_checked("/sbin/e2fsck\0");
-
-fn check_fs(dev: &UnixStr) -> Result<()> {
-    const P: &UnixStr = UnixStr::from_str_checked("-p\0");
-    let mut cmd = Command::new(E2FSCK)
-        .map_err(|e| Error::Spawn(format!("Failed to create command /sbin/e2fsck: {e}")))?
-        .arg(P)
-        .arg(dev)
-        .spawn()
-        .map_err(|e| Error::Spawn(format!("Failed to spawn /sbin/e2fsck {e}")))?;
-    let exit = cmd.wait().unwrap();
-    if exit != 0 {
-        return Err(Error::Spawn(format!("Fschk exited with code {exit}")));
-    }
-
-    Ok(())
-}
-
 enum AuthMethod {
     File(UnixString),
     Pass(String),
@@ -92,36 +75,36 @@ enum AuthMethod {
 const PASS_BUF_CAP: usize = 64;
 const DEV_MAPPER_CROOT: &UnixStr = UnixStr::from_str_checked("/dev/mapper/croot\0");
 const DEV_MAPPER_CHOME: &UnixStr = UnixStr::from_str_checked("/dev/mapper/chome\0");
-const DEV_MAPPER_CSWAP: &UnixStr = UnixStr::from_str_checked("/dev/mapper/cswap\0");
 const MNT_ROOT: &UnixStr = UnixStr::from_str_checked("/mnt/root\0");
 const MNT_ROOT_HOME: &UnixStr = UnixStr::from_str_checked("/mnt/root/home\0");
 
-pub fn mount_user_filesystems(cfg: &Cfg) -> Result<()> {
+pub fn prep_user_filesystems(cfg: &Cfg) -> Result<()> {
     let parts = get_partitions(cfg)
         .map_err(|e| Error::Mount(format!("Failed to find partitions {e:?}")))?;
     let mut pass_buf = [0u8; PASS_BUF_CAP];
-    let auth_method = if let Some(file) = cfg.crypt_file.clone() {
-        AuthMethod::File(UnixString::try_from_string(file)
-            .map_err(|_e| Error::Crypt("Failed to convert crypt file to a unix str".to_string()))?)
-    } else {
-        print_pending!("Enter passphrase for decryption: ");
-        let pass = get_pass(&mut pass_buf)
-            .map_err(|e| Error::Crypt(format!("Failed to get password for decryption: {e}")))?;
-        AuthMethod::Pass(pass.trim_end_matches('\n').to_string())
-    };
-    let confirmed_auth = try_decrypt_fallback_pass(&parts.root, tiny_std::unix_lit!("croot"), auth_method)?;
-    open_cryptodisk(&UnixString::try_from_str(&parts.swap)
-        .map_err(|_e| Error::Crypt("Failed to convert swap uuid to a unix str".to_string()))?, tiny_std::unix_lit!("cswap"), &confirmed_auth)
-        .map_err(|e| Error::Mount(format!("Failed to decrypt swap partition {e:?}")))?;
-    open_cryptodisk(&UnixString::try_from_str(&parts.home)
-        .map_err(|_e| Error::Crypt("Failed to convert home uuid to a unix str".to_string()))?, tiny_std::unix_lit!("chome"), &confirmed_auth)
-        .map_err(|e| Error::Mount(format!("Failed to decrypt home partition {e:?}")))?;
-    if let Err(e) = check_fs(DEV_MAPPER_CROOT) {
-        print_error!("Failed to check root-fs: {e:?}");
-    }
-    if let Err(e) = check_fs(DEV_MAPPER_CHOME) {
-        print_error!("Failed to check home-fs: {e:?}");
-    };
+    let auth_method =
+        if let Some(file) = cfg.crypt_file.clone() {
+            AuthMethod::File(UnixString::try_from_string(file).map_err(|_e| {
+                Error::Crypt("Failed to convert crypt file to a unix str".to_string())
+            })?)
+        } else {
+            print_pending!("Enter passphrase for decryption: ");
+            let pass = get_pass(&mut pass_buf)
+                .map_err(|e| Error::Crypt(format!("Failed to get password for decryption: {e}")))?;
+            AuthMethod::Pass(pass.trim_end_matches('\n').to_string())
+        };
+    try_decrypt_parallel(
+        &UnixString::try_from_str(&parts.root)
+            .map_err(|_e| Error::Crypt("Failed to convert root uuid to a unix str".to_string()))?,
+        unix_lit!("croot"),
+        &UnixString::try_from_str(&parts.swap)
+            .map_err(|_e| Error::Crypt("Failed to convert swap uuid to a unix str".to_string()))?,
+        tiny_std::unix_lit!("cswap"),
+        &UnixString::try_from_str(&parts.home)
+            .map_err(|_e| Error::Crypt("Failed to convert home uuid to a unix str".to_string()))?,
+        tiny_std::unix_lit!("chome"),
+        &auth_method,
+    )?;
 
     mount(
         DEV_MAPPER_CROOT,
@@ -149,25 +132,30 @@ pub fn mount_user_filesystems(cfg: &Cfg) -> Result<()> {
             parts.home
         ))
     })?;
-    swapon(DEV_MAPPER_CSWAP, 0)
-        .map_err(|e| Error::Mount(format!("Failed to swapon {}: {e:?}", parts.swap)))?;
     Ok(())
 }
 
-fn try_decrypt_fallback_pass(
-    root_uuid: &str,
+fn try_decrypt_parallel(
+    root_uuid: &UnixStr,
     root_target: &UnixStr,
-    method: AuthMethod,
-) -> Result<AuthMethod> {
-    let root_uuid_unix = UnixString::try_from_str(root_uuid)
-        .map_err(|_e| Error::Crypt(format!("Failed to convert root uuid {root_uuid} to a unix str")))?;
-    match open_cryptodisk(&root_uuid_unix, root_target, &method) {
-        Ok(_) => Ok(method),
-        Err(e) => {
-            let mut e = e;
+    swap_uuid: &UnixStr,
+    swap_target: &UnixStr,
+    home_uuid: &UnixStr,
+    home_target: &UnixStr,
+    auth_method: &AuthMethod,
+) -> Result<()> {
+    let root_c = spawn_open_cryptodisk(root_uuid, root_target, auth_method)?;
+    let swap_c = spawn_open_cryptodisk(swap_uuid, swap_target, auth_method)?;
+    let home_c = spawn_open_cryptodisk(home_uuid, home_target, auth_method)?;
+    match (
+        handle_crypto_child(root_c),
+        handle_crypto_child(swap_c),
+        handle_crypto_child(home_c),
+    ) {
+        (Ok(()), Ok(()), Ok(())) => return Ok(()),
+        (mut root_res, mut home_res, mut swap_res) => {
             for i in 0..3 {
-                // All variables that borrow this buf is dropped when we exit this scope
-                print_error!("Failed to decrypt root partition: {e:?}, will try again with passphrase, attempt {i}");
+                print_error!("Failed to decrypt a partition: root-failed={}, home-failed={}, swap-failed={}, will try again with passphrase, attempt {i}", root_res.is_ok(), home_res.is_ok(), swap_res.is_ok());
                 print_pending!("Enter passphrase for decryption: ");
                 let mut pass_buffer = [0u8; PASS_BUF_CAP];
                 let pass = get_pass(&mut pass_buffer)
@@ -176,19 +164,31 @@ fn try_decrypt_fallback_pass(
                     })?
                     .trim();
                 let try_auth = AuthMethod::Pass(pass.trim_end_matches('\n').to_string());
-                match open_cryptodisk(&root_uuid_unix, root_target, &try_auth) {
-                    Ok(_) => {
-                        print_ok!("It's your lucky day, continuing.");
-                        return Ok(try_auth);
-                    }
-                    Err(err) => {
-                        e = err;
-                    }
+                if root_res.is_err() {
+                    root_res = handle_crypto_child(spawn_open_cryptodisk(
+                        root_uuid,
+                        root_target,
+                        &try_auth,
+                    )?);
+                }
+                if home_res.is_err() {
+                    home_res = handle_crypto_child(spawn_open_cryptodisk(
+                        home_uuid,
+                        home_target,
+                        &try_auth,
+                    )?);
+                }
+                if swap_res.is_err() {
+                    swap_res = handle_crypto_child(spawn_open_cryptodisk(
+                        swap_uuid,
+                        swap_target,
+                        &try_auth,
+                    )?);
                 }
             }
-            Err(e)
         }
     }
+    Ok(())
 }
 
 const BIN_BUSYBOX: &UnixStr = UnixStr::from_str_checked("/bin/busybox\0");
@@ -198,8 +198,7 @@ pub fn run_mdev() -> Result<()> {
     const S: &UnixStr = UnixStr::from_str_checked("-s\0");
     let mut cmd = Command::new(BIN_BUSYBOX)
         .map_err(|e| Error::Spawn(format!("Failed to create command /bin/busybox: {e}")))?;
-    cmd.arg(MDEV)
-        .arg(S);
+    cmd.arg(MDEV).arg(S);
     let exit = cmd
         .spawn()
         .map_err(|e| Error::Spawn(format!("Failed to spawn /bin/busybox mdev -s: {e}")))?
@@ -276,47 +275,45 @@ pub fn get_partitions(cfg: &Cfg) -> Result<Partitions> {
 
 const CRYPTSETUP: &UnixStr = UnixStr::from_str_checked("/sbin/cryptsetup\0");
 
-pub(crate) fn open_cryptodisk(
+pub(crate) fn spawn_open_cryptodisk(
     device_name: &UnixStr,
     target_name: &UnixStr,
     auth: &AuthMethod,
-) -> Result<()> {
+) -> Result<Child> {
     const KEY_FILE: &UnixStr = UnixStr::from_str_checked("keyfile\0");
     const KEY_FILE_ARG: &UnixStr = UnixStr::from_str_checked("--key-file\0");
     const OPEN: &UnixStr = UnixStr::from_str_checked("open\0");
     let key_file = match auth {
         AuthMethod::File(f) => f.clone(),
-        AuthMethod::Pass(pass) => {
-            match tiny_std::fs::metadata(KEY_FILE) {
-                Ok(_) => UnixString::from(KEY_FILE),
-                Err(e) => {
-                    if e.matches_errno(Errno::ENOENT) {
-                        let mut file = tiny_std::fs::OpenOptions::new()
-                            .write(true)
-                            .create(true)
-                            .open(KEY_FILE)
-                            .map_err(|e| {
-                                Error::Crypt(format!("Failed to open/create keyfile {e}"))
-                            })?;
-                        file.write_all(pass.as_bytes())
-                            .map_err(|e| Error::Crypt(format!("Failed to write keyfile {e}")))?;
-                        UnixString::from(KEY_FILE)
-                    } else {
-                        return Err(Error::Crypt(format!(
-                            "Failed to check for existing keyfile {e}"
-                        )));
-                    }
+        AuthMethod::Pass(pass) => match tiny_std::fs::metadata(KEY_FILE) {
+            Ok(_) => UnixString::from(KEY_FILE),
+            Err(e) => {
+                if e.matches_errno(Errno::ENOENT) {
+                    let mut file = tiny_std::fs::OpenOptions::new()
+                        .write(true)
+                        .create(true)
+                        .open(KEY_FILE)
+                        .map_err(|e| Error::Crypt(format!("Failed to open/create keyfile {e}")))?;
+                    file.write_all(pass.as_bytes())
+                        .map_err(|e| Error::Crypt(format!("Failed to write keyfile {e}")))?;
+                    UnixString::from(KEY_FILE)
+                } else {
+                    return Err(Error::Crypt(format!(
+                        "Failed to check for existing keyfile {e}"
+                    )));
                 }
             }
-        }
+        },
     };
 
-    let mut child = tiny_std::process::Command::new(CRYPTSETUP)
+    print_ok!("Attempting to open {:?}", target_name);
+    let child = tiny_std::process::Command::new(CRYPTSETUP)
         .map_err(|e| {
             Error::Crypt(format!(
                 "Failed to instantiate command /sbin/cryptsetup {e}"
             ))
         })?
+        .arg(unix_lit!("--allow-discards"))
         .arg(KEY_FILE_ARG)
         .arg(&key_file)
         .arg(OPEN)
@@ -324,6 +321,10 @@ pub(crate) fn open_cryptodisk(
         .arg(target_name)
         .spawn()
         .map_err(|e| Error::Crypt(format!("Failed to spawn /sbin/cryptsetup {e}")))?;
+    Ok(child)
+}
+
+pub(crate) fn handle_crypto_child(mut child: Child) -> Result<()> {
     let res = child.wait().map_err(|e| {
         Error::Crypt(format!(
             "Failed to await for child process /sbin/cryptsetup: {e}"
@@ -487,14 +488,17 @@ pub fn write_cfg(cfg: &Cfg, path: &UnixStr) -> core::result::Result<(), String> 
 
 #[cfg(test)]
 mod tests {
-    use tiny_std::println;
     use super::*;
+    use tiny_std::println;
 
     // Needs your testing machine's disk uuids
     #[test]
     #[ignore]
     fn test_blkid() {
-        let cfg = read_cfg(UnixStr::from_str_checked("/home/gramar/code/rust/yubi-initramfs/initramfs.cfg\0")).unwrap();
+        let cfg = read_cfg(UnixStr::from_str_checked(
+            "/home/gramar/code/rust/yubi-initramfs/initramfs.cfg\0",
+        ))
+        .unwrap();
         let parts = get_partitions(&cfg).unwrap();
         println!("{parts:?}");
     }

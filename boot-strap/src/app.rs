@@ -7,8 +7,8 @@ use boot_lib::crypt::{
 };
 use boot_lib::BootCfg;
 use core::fmt::Write;
-use rusl::string::unix_str::UnixStr;
 use initramfs_lib::{print_error, print_ok};
+use rusl::string::unix_str::UnixStr;
 use tiny_cli::{ArgParse, Subcommand};
 use tiny_std::linux::get_pass::get_pass;
 use tiny_std::println;
@@ -73,13 +73,13 @@ struct InitramfsGenInitOpts {
 #[cli(help_path = "boot-rs, initramfs")]
 struct InitramfsOptions {
     #[cli(subcommand)]
-    subcommand: InitramfsAction
+    subcommand: InitramfsAction,
 }
 
 #[derive(Debug, Subcommand)]
 enum InitramfsAction {
     GenCfg(InitramfsGenCfgOpts),
-    GenInit(InitramfsGenInitOpts)
+    GenInit(InitramfsGenInitOpts),
 }
 
 /// Encrypt kernel image
@@ -91,7 +91,6 @@ struct BootOpts {
     /// If compiling locally, is usually `src-dir/arch/<arch>/boot/bzImage`.
     #[cli(short = "i", long = "kernel-image-path")]
     kernel_image_path: &'static UnixStr,
-
 
     /// Encrypted destination.
     /// Where to put the encrypted kernel image.
@@ -142,13 +141,13 @@ struct BootOpts {
 #[cli(help_path = "boot-rs")]
 struct Opts {
     #[cli(subcommand)]
-    subcommand: Action
+    subcommand: Action,
 }
 
 #[derive(Debug, Subcommand)]
 enum Action {
     Initramfs(InitramfsOptions),
-    Boot(BootOpts)
+    Boot(BootOpts),
 }
 
 fn create_argon2opts_maybe_default(
@@ -172,42 +171,40 @@ fn create_argon2opts_maybe_default(
 pub(crate) fn run() {
     let args = tiny_std::unix::cli::parse_cli_args::<Opts>();
     match args.subcommand {
-        Action::Initramfs(initramfs) => {
-            match initramfs.subcommand {
-                InitramfsAction::GenCfg(InitramfsGenCfgOpts {
-                                            home_uuid,
-                                            root_uuid,
-                                            swap_uuid,
-                                            overwrite,
-                                            destination_file,
-                                        }) => {
-                    gen_cfg(home_uuid, root_uuid, swap_uuid, destination_file, overwrite).unwrap();
-                }
-                InitramfsAction::GenInit(InitramfsGenInitOpts {
-                                             initramfs_cfg,
-                                             destination_directory,
-                                             argon2_mem,
-                                             argon2_time,
-                                             argon2_lanes,
-                                         }) => {
-                    let argon2_cfg =
-                        create_argon2opts_maybe_default(argon2_mem, argon2_time, argon2_lanes);
-                    if let Err(e) = generate_initramfs(&initramfs_cfg, &argon2_cfg, &destination_directory) {
-                        print_error!("Failed to generate initramfs: {e}");
-                        rusl::process::exit(1);
-                    }
-                    print_ok!("Successfully generated initramfs, don't forget to add initramfs-rs as `./init` to it.");
-                }
+        Action::Initramfs(initramfs) => match initramfs.subcommand {
+            InitramfsAction::GenCfg(InitramfsGenCfgOpts {
+                home_uuid,
+                root_uuid,
+                swap_uuid,
+                overwrite,
+                destination_file,
+            }) => {
+                gen_cfg(home_uuid, root_uuid, swap_uuid, destination_file, overwrite).unwrap();
             }
-        }
-        Action::Boot(boot_opts) => {
-            match generate(&boot_opts) {
-                Ok(_) => {}
-                Err(e) => {
-                    panic!("Failed to generate: {e}");
+            InitramfsAction::GenInit(InitramfsGenInitOpts {
+                initramfs_cfg,
+                destination_directory,
+                argon2_mem,
+                argon2_time,
+                argon2_lanes,
+            }) => {
+                let argon2_cfg =
+                    create_argon2opts_maybe_default(argon2_mem, argon2_time, argon2_lanes);
+                if let Err(e) =
+                    generate_initramfs(&initramfs_cfg, &argon2_cfg, &destination_directory)
+                {
+                    print_error!("Failed to generate initramfs: {e}");
+                    rusl::process::exit(1);
                 }
+                print_ok!("Successfully generated initramfs, don't forget to add initramfs-rs as `./init` to it.");
             }
-        }
+        },
+        Action::Boot(boot_opts) => match generate(&boot_opts) {
+            Ok(_) => {}
+            Err(e) => {
+                panic!("Failed to generate: {e}");
+            }
+        },
     }
 }
 
@@ -219,9 +216,13 @@ fn generate(gen_opts: &BootOpts) -> Result<(), String> {
         )
     })?;
     print_ok!("Read kernel image at {:?}", gen_opts.kernel_image_path);
-    let efi_path = get_efi_path_string(gen_opts.efi_path.as_str()
-        .map_err(|_e| format!("Failed to convert supplied EFI path to a utf8 str"))?)
-        .map_err(|e| format!("Failed to convert supplied efi path: {e}"))?;
+    let efi_path = get_efi_path_string(
+        gen_opts
+            .efi_path
+            .as_str()
+            .map_err(|_e| format!("Failed to convert supplied EFI path to a utf8 str"))?,
+    )
+    .map_err(|e| format!("Failed to convert supplied efi path: {e}"))?;
     let (nonce, salt) =
         generate_nonce_and_salt().map_err(|e| format!("Failed to generate random vectors: {e}"))?;
     let pass = prompt_passwords().map_err(|e| format!("Failed to get password: {e}"))?;
@@ -267,9 +268,7 @@ fn generate(gen_opts: &BootOpts) -> Result<(), String> {
     if decrypted != kernel_data.as_slice() {
         return Err("Failed to decrypt kernel image, input is not the same as output".to_string());
     }
-    println!(
-        "[boot-rs]: Successfully ran test-decryption in {decryption_time} seconds"
-    );
+    println!("[boot-rs]: Successfully ran test-decryption in {decryption_time} seconds");
     let cfg = BootCfg {
         device: &gen_opts.efi_device,
         encrypted_path_on_device: &efi_path,

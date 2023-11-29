@@ -1,5 +1,5 @@
-use tiny_std::{UnixString, unix_lit};
 use initramfs_lib::{bail_to_shell, print_error, print_ok, read_cfg, Cfg};
+use tiny_std::{unix_lit, UnixString};
 
 /// Some references [Gentoo custom initramfs](https://wiki.gentoo.org/wiki/Custom_Initramfs)
 /// [Boot kernel without bootloader](https://tecporto.pt/wiki/index.php/Booting_the_Linux_Kernel_without_a_bootloader)
@@ -38,11 +38,11 @@ pub(crate) fn main_loop() -> Result<(), i32> {
             print_error!("Command arg not parseable as utf8: {e}");
             1
         })?;
-    let cfg = read_cfg(&UnixString::try_from_str(cfg_path)
-        .map_err(|_e| {
-            print_error!("Failed to convert cfg path to a UnixString");
-            1
-        })?).map_err(|e| {
+    let cfg = read_cfg(&UnixString::try_from_str(cfg_path).map_err(|_e| {
+        print_error!("Failed to convert cfg path to a UnixString");
+        1
+    })?)
+    .map_err(|e| {
         print_error!("Failed to read cfg: {e:?}");
         1
     })?;
@@ -83,7 +83,7 @@ pub(crate) fn main_loop() -> Result<(), i32> {
             Ok(())
         }
         "--mount-user" | "-u" => {
-            initramfs_lib::mount_user_filesystems(&cfg).map_err(|e| {
+            initramfs_lib::prep_user_filesystems(&cfg).map_err(|e| {
                 print_error!(
                     "Error: Failed to mount user filesystems using cfg  at path {cfg:?}: {e:?}"
                 );

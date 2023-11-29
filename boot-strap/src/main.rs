@@ -9,7 +9,7 @@ mod initramfs;
 extern crate alloc;
 
 #[no_mangle]
-extern "Rust" fn main() -> i32 {
+fn main() -> i32 {
     app::run();
     0
 }

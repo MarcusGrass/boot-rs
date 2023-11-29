@@ -76,8 +76,8 @@ macro_rules! print_error {
 
 #[cfg(test)]
 mod tests {
-    use tiny_std::println;
     use crate::print::Color;
+    use tiny_std::println;
 
     #[test]
     fn test_print() {
