@@ -26,7 +26,7 @@ const CFG_RAW: &str = include_str!("../../boot.cfg");
 
 #[entry]
 fn main(_handle: Handle, mut system_table: SystemTable<Boot>) -> Status {
-    uefi_services::init(&mut system_table).unwrap();
+    uefi::helpers::init(&mut system_table).unwrap();
     let _ = system_table
         .stdout()
         .write_str("[boot-rs]: Welcome to the encrypted boot checker!\n");

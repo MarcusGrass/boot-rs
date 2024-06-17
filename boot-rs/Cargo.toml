@@ -7,5 +7,4 @@ edition = "2021"
 
 [dependencies]
 boot-lib = { workspace = true }
-uefi = { workspace = true, features = ["alloc"] }
-uefi-services = { workspace = true }
+uefi = { workspace = true, features = ["alloc", "global_allocator", "panic_handler"] }
