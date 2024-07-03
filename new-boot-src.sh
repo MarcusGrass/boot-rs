@@ -12,6 +12,9 @@ INITRAMFS_LOCATION="<abs-path>"
 IMG="/usr/src/$VERSION/arch/x86/boot/bzImage"
 REPO="/home/$USER/code/rust/boot-rs"
 BOOT_IMG_DEST="/boot/EFI/boot-rs.efi"
+# Get this from efibootmgr, don't know else you find this, check the Readme for creating a boot entry
+# efibootmgr outputs this info after that
+BOOT_EFI_DISK="HD(<some-disk-number>,GPT,<part-uuid>,<some-number>,<some-other-number>)"
 
 BOOT_DISK_MOUNTED_CORRECTLY="y"
 BOOT_DISK_MOUNTED_INCORRECTLY="i"
@@ -110,7 +113,7 @@ read -p "Everything checks out, continue writing kernel image to boot disk? [y]:
 
 # Continue to write the new kernel image to disk, if requested
 if [[ "y" == "$WRITE_IMG" ]] ; then
-	"$REPO/target/x86_64-unknown-linux-gnu/lto/boot-strap" boot -i "$IMG" -e "/boot/EFI/gentoo/$VERSION.enc" -c "$REPO/boot.cfg" -d "HD(1,GPT,83df25a9-60bd-2e4f-acac-3303e0123f71,0x800,0x200000)" -p "/EFI/gentoo/$VERSION.enc"
+	"$REPO/target/x86_64-unknown-linux-gnu/lto/boot-strap" boot -i "$IMG" -e "/boot/EFI/gentoo/$VERSION.enc" -c "$REPO/boot.cfg" -d "$BOOT_EFI_DISK" -p "/EFI/gentoo/$VERSION.enc"
 	sync
 else
 	echo "Exiting"
