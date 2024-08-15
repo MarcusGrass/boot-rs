@@ -191,7 +191,7 @@ pub(crate) fn run() {
                 let argon2_cfg =
                     create_argon2opts_maybe_default(argon2_mem, argon2_time, argon2_lanes);
                 if let Err(e) =
-                    generate_initramfs(&initramfs_cfg, &argon2_cfg, &destination_directory)
+                    generate_initramfs(initramfs_cfg, &argon2_cfg, destination_directory)
                 {
                     print_error!("Failed to generate initramfs: {e}");
                     rusl::process::exit(1);
@@ -200,7 +200,7 @@ pub(crate) fn run() {
             }
         },
         Action::Boot(boot_opts) => match generate(&boot_opts) {
-            Ok(_) => {}
+            Ok(()) => {}
             Err(e) => {
                 panic!("Failed to generate: {e}");
             }
@@ -209,7 +209,7 @@ pub(crate) fn run() {
 }
 
 fn generate(gen_opts: &BootOpts) -> Result<(), String> {
-    let kernel_data = tiny_std::fs::read(&gen_opts.kernel_image_path).map_err(|e| {
+    let kernel_data = tiny_std::fs::read(gen_opts.kernel_image_path).map_err(|e| {
         format!(
             "Failed to read kernel image at supplied path {:?}: {e}",
             gen_opts.kernel_image_path
@@ -220,7 +220,7 @@ fn generate(gen_opts: &BootOpts) -> Result<(), String> {
         gen_opts
             .efi_path
             .as_str()
-            .map_err(|_e| format!("Failed to convert supplied EFI path to a utf8 str"))?,
+            .map_err(|_e| "Failed to convert supplied EFI path to a utf8 str".to_string())?,
     )
     .map_err(|e| format!("Failed to convert supplied efi path: {e}"))?;
     let (nonce, salt) =
@@ -278,7 +278,7 @@ fn generate(gen_opts: &BootOpts) -> Result<(), String> {
         "[boot-rs]: Writing encrypted kernel to {:?}",
         gen_opts.kernel_enc_path
     );
-    tiny_std::fs::write(&gen_opts.kernel_enc_path, encrypted.as_slice()).map_err(|e| {
+    tiny_std::fs::write(gen_opts.kernel_enc_path, encrypted.as_slice()).map_err(|e| {
         format!(
             "Failed to write encrypted kernel to out path {:?}: {e}",
             gen_opts.kernel_enc_path
@@ -288,7 +288,7 @@ fn generate(gen_opts: &BootOpts) -> Result<(), String> {
         "[boot-rs]: Writing configuration to {:?}",
         gen_opts.cfg_destination
     );
-    tiny_std::fs::write(&gen_opts.cfg_destination, cfg_out.as_bytes()).map_err(|e| {
+    tiny_std::fs::write(gen_opts.cfg_destination, cfg_out.as_bytes()).map_err(|e| {
         format!(
             "Failed to write cfg to out path {:?}: {e}",
             gen_opts.cfg_destination

@@ -31,7 +31,7 @@ fn main(_handle: Handle, mut system_table: SystemTable<Boot>) -> Status {
         .stdout()
         .write_str("[boot-rs]: Welcome to the encrypted boot checker!\n");
     let e = match boot(&mut system_table) {
-        Ok(_) => {
+        Ok(()) => {
             // Should be unreachable if I understood the docs correctly, we should yield to
             // the kernel image and never come back.
             return Status::SUCCESS;

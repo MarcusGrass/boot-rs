@@ -74,9 +74,7 @@ enum AuthMethod {
 
 const PASS_BUF_CAP: usize = 64;
 const DEV_MAPPER_CROOT: &UnixStr = UnixStr::from_str_checked("/dev/mapper/croot\0");
-const DEV_MAPPER_CHOME: &UnixStr = UnixStr::from_str_checked("/dev/mapper/chome\0");
 const MNT_ROOT: &UnixStr = UnixStr::from_str_checked("/mnt/root\0");
-const MNT_ROOT_HOME: &UnixStr = UnixStr::from_str_checked("/mnt/root/home\0");
 
 pub fn prep_user_filesystems(cfg: &Cfg) -> Result<()> {
     let parts = get_partitions(cfg)
@@ -117,19 +115,6 @@ pub fn prep_user_filesystems(cfg: &Cfg) -> Result<()> {
         Error::Mount(format!(
             "Failed to mount root partition {} to /mnt/root: {e:?}",
             parts.root
-        ))
-    })?;
-    mount(
-        DEV_MAPPER_CHOME,
-        MNT_ROOT_HOME,
-        FilesystemType::EXT4,
-        Mountflags::empty(),
-        None,
-    )
-    .map_err(|e| {
-        Error::Mount(format!(
-            "Failed to mount home partition {} to /mnt/root/home: {e:?}",
-            parts.home
         ))
     })?;
     Ok(())
