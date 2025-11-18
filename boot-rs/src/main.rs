@@ -191,7 +191,7 @@ fn yield_to_kernel(mut raw_kernel_image: Vec<u8>) -> Result<(), String> {
 
 fn get_pass() -> Result<String, String> {
     let _ = uefi::system::with_stdout(|output| {
-        output.write_str("[boot-rs]: Enter kernel decryption key: \n")
+        output.write_str("[boot-rs]: Enter kernel decryption key: ")
     });
     let mut decr = String::new();
     loop {
@@ -219,14 +219,22 @@ fn get_pass() -> Result<String, String> {
                 if ch == '\r' {
                     break;
                 }
-                if ch == '\u{08}' {
-                    decr.pop();
+                // Backspace
+                if ch as u32 == 0x08 {
+                    if decr.pop().is_some() {
+                        // Only apply backspacing if there are chars in the user's input left
+                        // Otherwise we'll be wiping the bootloader's previous output message (will look weird)
+                        let _ = uefi::system::with_stdout(|stdout| stdout.write_char(0x08 as char));
+                    }
+                    continue;
                 }
+                let _ = uefi::system::with_stdout(|stdout| stdout.write_char('*'));
                 decr.push(ch);
             }
             Key::Special(_) => {}
         }
     }
+    let _ = uefi::system::with_stdout(|stdout| stdout.write_char('\n'));
     Ok(decr)
 }
 
