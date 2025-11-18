@@ -36,7 +36,6 @@ impl<'a> BootCfg<'a> {
                     }
                 }
             } else if line.trim().starts_with('#') || line.trim().is_empty() {
-                continue;
             } else {
                 return Err(format!("Found bad line in configuration {line}"));
             }

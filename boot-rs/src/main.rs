@@ -204,7 +204,7 @@ fn get_pass() -> Result<String, String> {
         };
         uefi::boot::wait_for_event(&mut [key_ready_evt])
             .map_err(|e| format!("ERROR: Failed to wait for key event when listening to kernel decryption key: {e:?}"))?;
-        let key = uefi::system::with_stdin(|input| input.read_key())
+        let key = uefi::system::with_stdin(uefi::proto::console::text::Input::read_key)
             .map_err(|e| {
                 format!("ERROR: Failed to read key after waiting and receiving a key event: {e:?}")
             })?
@@ -233,7 +233,7 @@ fn get_pass() -> Result<String, String> {
 fn await_enter() {
     let _ =
         uefi::system::with_stdout(|output| output.write_str("[boot-rs]: Press enter to exit.\n"));
-    let _ = uefi::system::with_stdin(|input| loop {
+    uefi::system::with_stdin(|input| loop {
         if let Some(key) = input.read_key().unwrap() {
             match key {
                 Key::Printable(ch) => {
